@@ -16,6 +16,7 @@ import aiohttp
 
 from .engine import Role, Phase, ROLE_NAMES, ROLE_SIDES
 from .agents import Agent
+from .tools import AVALON_TOOL_DEFINITIONS
 
 
 SYSTEM_PROMPT_TEMPLATE = """You are Player {player_id} in a 5-player game of The Resistance: Avalon.
@@ -110,6 +111,44 @@ class LLMAgent(Agent):
                 data = await resp.json()
                 return data["choices"][0]["message"]["content"].strip()
 
+    async def _call_llm_tool(self, user_prompt: str, tool_name: str, tools: List[Dict[str, Any]]) -> Dict[str, Any]:
+        """
+        Calls the LLM with tool definitions, forcing or guiding the model to execute tool_name.
+        """
+        if not self.api_key:
+            return {}
+
+        headers = {
+            "Authorization": f"Bearer {self.api_key}",
+            "Content-Type": "application/json",
+        }
+
+        messages = [
+            {"role": "system", "content": self._build_system_prompt()},
+            {"role": "user", "content": "\n".join(self.chat_history[-15:]) + "\n\n" + user_prompt},
+        ]
+
+        payload: Dict[str, Any] = {
+            "model": self.model,
+            "messages": messages,
+            "tools": tools,
+            "tool_choice": {"type": "function", "function": {"name": tool_name}},
+            "temperature": self.temperature,
+        }
+
+        url = f"{self.base_url}/chat/completions"
+        async with aiohttp.ClientSession() as session:
+            async with session.post(url, json=payload, headers=headers) as resp:
+                if resp.status != 200:
+                    err_msg = await resp.text()
+                    raise RuntimeError(f"LLM Tool Call Error ({resp.status}): {err_msg}")
+                data = await resp.json()
+                choice = data["choices"][0]["message"]
+                if "tool_calls" in choice and choice["tool_calls"]:
+                    call = choice["tool_calls"][0]
+                    return json.loads(call["function"]["arguments"])
+                return {}
+
     async def team_discussion(self, turn: int, round_num: int, leader: int, team_size: int) -> str:
         prompt = (
             f"Current state: Quest {turn + 1}, Proposal Round {round_num + 1}. Leader is Player {leader}.\n"
@@ -121,12 +160,17 @@ class LLMAgent(Agent):
             return f"As Player {self.player_id}, I want to make sure we keep evil players off Quest {turn + 1}."
 
     async def propose_team(self, turn: int, team_size: int) -> List[int]:
-        prompt = (
-            f"You are the Leader for Quest {turn + 1}. You must propose a team of exactly {team_size} distinct players.\n"
-            f"Respond strictly in JSON format: {{\"team\": [list of {team_size} player indices]}}"
-        )
+        prompt = f"You are the Leader for Quest {turn + 1}. Call propose_team with exactly {team_size} distinct players."
         try:
-            resp = await self._call_llm(prompt, json_mode=True)
+            # 1. Try Tool Calling first
+            args = await self._call_llm_tool(prompt, "propose_team", AVALON_TOOL_DEFINITIONS)
+            if "team" in args:
+                team = [int(x) for x in args["team"]]
+                if len(set(team)) == team_size and all(0 <= p < self.num_players for p in team):
+                    return sorted(team)
+
+            # 2. Try JSON mode fallback
+            resp = await self._call_llm(prompt + " Output strictly JSON: {\"team\": [...]}.", json_mode=True)
             data = json.loads(resp)
             team = [int(x) for x in data["team"]]
             if len(set(team)) == team_size and all(0 <= p < self.num_players for p in team):
@@ -134,7 +178,7 @@ class LLMAgent(Agent):
         except Exception:
             pass
 
-        # Fallback to heuristic
+        # 3. Fallback to belief heuristic
         team = [self.player_id]
         others = [p for p in range(self.num_players) if p != self.player_id]
         if self.belief_graph:
@@ -146,12 +190,15 @@ class LLMAgent(Agent):
         if round_num >= 4:
             return True  # Hammer round auto-approves
 
-        prompt = (
-            f"Quest {turn + 1}, Round {round_num + 1}. Leader Player {leader} proposed team: {team}.\n"
-            f"Do you approve this team? Respond strictly in JSON: {{\"approve\": true/false, \"reason\": \"short reason\"}}"
-        )
+        prompt = f"Quest {turn + 1}, Round {round_num + 1}. Leader Player {leader} proposed team {team}. Call vote_on_team to approve or reject."
         try:
-            resp = await self._call_llm(prompt, json_mode=True)
+            # 1. Try Tool Calling first
+            args = await self._call_llm_tool(prompt, "vote_on_team", AVALON_TOOL_DEFINITIONS)
+            if "approve" in args:
+                return bool(args["approve"])
+
+            # 2. Try JSON mode fallback
+            resp = await self._call_llm(prompt + " Output JSON: {\"approve\": true/false}", json_mode=True)
             data = json.loads(resp)
             return bool(data.get("approve", True))
         except Exception:
@@ -161,26 +208,31 @@ class LLMAgent(Agent):
         if self.side:
             return True  # Good must pass
 
-        prompt = (
-            f"You are an Evil player on Quest {turn + 1} with team {team}.\n"
-            f"Do you choose to Pass (to build trust) or Fail (to score a mission point for Evil)?\n"
-            f"Respond strictly in JSON: {{\"pass_mission\": true/false}}"
-        )
+        prompt = f"You are Evil on Quest {turn + 1} with team {team}. Call vote_on_quest to Pass (bluff) or Fail (score)."
         try:
-            resp = await self._call_llm(prompt, json_mode=True)
+            # 1. Try Tool Calling first
+            args = await self._call_llm_tool(prompt, "vote_on_quest", AVALON_TOOL_DEFINITIONS)
+            if "pass_quest" in args:
+                return bool(args["pass_quest"])
+
+            # 2. Try JSON mode fallback
+            resp = await self._call_llm(prompt + " Output JSON: {\"pass_quest\": true/false}", json_mode=True)
             data = json.loads(resp)
-            return bool(data.get("pass_mission", False))
+            return bool(data.get("pass_quest", False))
         except Exception:
             return False
 
     async def assassinate(self) -> int:
         good_players = [p for p in range(self.num_players) if p not in self.private_info.get("seen_evil", []) and p != self.player_id]
-        prompt = (
-            f"Good succeeded 3 quests! You are the Assassin. You must assassinate Merlin among {good_players}.\n"
-            f"Respond strictly in JSON: {{\"target\": player_id}}"
-        )
+        prompt = f"Good succeeded 3 quests! You are the Assassin. Call assassinate with your target player ID among {good_players}."
         try:
-            resp = await self._call_llm(prompt, json_mode=True)
+            # 1. Try Tool Calling first
+            args = await self._call_llm_tool(prompt, "assassinate", AVALON_TOOL_DEFINITIONS)
+            if "target" in args and int(args["target"]) in good_players:
+                return int(args["target"])
+
+            # 2. Try JSON mode fallback
+            resp = await self._call_llm(prompt + " Output JSON: {\"target\": player_id}", json_mode=True)
             data = json.loads(resp)
             target = int(data.get("target"))
             if target in good_players:

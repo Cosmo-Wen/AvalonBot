@@ -1,16 +1,29 @@
 """
-Boson AI Higgs TTS 3 Client.
+Boson AI Higgs TTS 3 Client & Audio Player.
 
-Provides streaming and file-based text-to-speech synthesis using
-the Higgs TTS 3 endpoint (https://api.boson.ai/v1/audio/speech).
-Maps each bot seat to a distinct voice personality.
+Synthesizes spoken lines for all Avalon players using the Boson Higgs TTS 3 API.
+Features:
+- Distinct voice personality mapped to each bot seat (0 to 4).
+- Emotion & prosody tag formatting (e.g. <|emotion:suspicious|>, <|emotion:confident|>).
+- Local audio caching (audio_cache/turn_X_round_Y_player_Z.wav).
+- Audio playback on Windows (via winsound).
+- Offline fallback waveform synthesizer so audio testing works even before API keys are added.
 """
 
 import os
-import aiohttp
+import wave
+import struct
+import math
 import asyncio
-from typing import Dict, Optional
+from typing import Dict, Optional, Tuple
 from pathlib import Path
+import aiohttp
+
+try:
+    import winsound
+    HAS_WINSOUND = True
+except ImportError:
+    HAS_WINSOUND = False
 
 
 DEFAULT_SEAT_VOICES: Dict[int, str] = {
@@ -21,10 +34,19 @@ DEFAULT_SEAT_VOICES: Dict[int, str] = {
     4: "default",
 }
 
+# Tones for offline/mock synthesizer (Hz)
+SEAT_TONE_FREQS = {
+    0: 220,  # A3 (Minion / low)
+    1: 440,  # A4 (Servant 1)
+    2: 554,  # C#5 (Servant 2)
+    3: 330,  # E4 (Assassin)
+    4: 659,  # E5 (Merlin / high)
+}
+
 
 class HiggsTTSClient:
     """
-    Client for Boson AI Higgs TTS 3 synthesis.
+    Client for Boson AI Higgs TTS 3 synthesis and audio playback.
     """
 
     BASE_URL: str = "https://api.boson.ai/v1/audio/speech"
@@ -34,56 +56,102 @@ class HiggsTTSClient:
         api_key: Optional[str] = None,
         model: str = "higgs-tts-3",
         seat_voices: Optional[Dict[int, str]] = None,
-        cache_dir: Optional[str] = "audio_cache",
+        cache_dir: str = "audio_cache",
+        play_audio: bool = True,
     ):
         self.api_key = api_key or os.getenv("BOSON_API_KEY", "")
         self.model = model
         self.seat_voices = seat_voices or DEFAULT_SEAT_VOICES
-        self.cache_dir = Path(cache_dir) if cache_dir else None
-        if self.cache_dir:
-            self.cache_dir.mkdir(parents=True, exist_ok=True)
+        self.cache_dir = Path(cache_dir)
+        self.cache_dir.mkdir(parents=True, exist_ok=True)
+        self.play_audio = play_audio
 
     def get_voice_for_seat(self, seat: int) -> str:
         return self.seat_voices.get(seat, "default")
+
+    def _generate_offline_wav(self, file_path: Path, freq: int = 440, duration_sec: float = 0.6):
+        """
+        Generates a small clean sine-wave PCM WAV for offline demonstration.
+        """
+        sample_rate = 24000
+        num_samples = int(sample_rate * duration_sec)
+        with wave.open(str(file_path), "w") as wav_file:
+            wav_file.setnchannels(1)       # Mono
+            wav_file.setsampwidth(2)      # 16-bit PCM
+            wav_file.setframerate(sample_rate)
+            raw_data = bytearray()
+            for i in range(num_samples):
+                t = float(i) / sample_rate
+                # Sine with smooth attack and decay envelope
+                envelope = math.sin(math.pi * i / num_samples)
+                val = int(envelope * 10000.0 * math.sin(2.0 * math.pi * freq * t))
+                raw_data.extend(struct.pack("<h", val))
+            wav_file.writeframes(raw_data)
 
     async def synthesize(
         self,
         text: str,
         voice: str = "default",
-        response_format: str = "wav",
-        save_path: Optional[str] = None,
-    ) -> bytes:
+        save_path: Optional[Path] = None,
+        emotion: Optional[str] = None,
+    ) -> Optional[bytes]:
         """
-        Synthesizes text into audio bytes via Higgs TTS 3.
+        Synthesizes text into audio bytes via Boson Higgs TTS 3.
+        Supports Higgs inline emotion tags (e.g. <|emotion:suspicious|>).
         """
-        if not self.api_key:
-            raise ValueError("BOSON_API_KEY is not set.")
+        # Inject Higgs emotion tag if specified and not already present
+        formatted_text = text
+        if emotion and not text.startswith("<|"):
+            formatted_text = f"<|emotion:{emotion}|>{text}"
 
-        headers = {
-            "Authorization": f"Bearer {self.api_key}",
-            "Content-Type": "application/json",
-        }
+        # If API key is present, call live Boson API
+        if self.api_key and self.api_key.startswith("bai-"):
+            headers = {
+                "Authorization": f"Bearer {self.api_key}",
+                "Content-Type": "application/json",
+            }
+            payload = {
+                "model": self.model,
+                "input": formatted_text,
+                "voice": voice,
+                "response_format": "wav",
+            }
 
-        payload = {
-            "model": self.model,
-            "input": text,
-            "voice": voice,
-            "response_format": response_format,
-        }
+            try:
+                async with aiohttp.ClientSession() as session:
+                    async with session.post(self.BASE_URL, json=payload, headers=headers) as resp:
+                        if resp.status == 200:
+                            audio_bytes = await resp.read()
+                            if save_path:
+                                save_path.write_bytes(audio_bytes)
+                            return audio_bytes
+                        else:
+                            err_text = await resp.text()
+                            print(f"[HiggsTTS Warning] API returned {resp.status}: {err_text}")
+            except Exception as e:
+                print(f"[HiggsTTS Error] Connection failed: {e}")
 
-        async with aiohttp.ClientSession() as session:
-            async with session.post(self.BASE_URL, json=payload, headers=headers) as resp:
-                if resp.status != 200:
-                    err_text = await resp.text()
-                    raise RuntimeError(f"Higgs TTS error (status {resp.status}): {err_text}")
-                audio_bytes = await resp.read()
-
+        # Fallback to local audio generation so workflow never blocks
         if save_path:
-            p = Path(save_path)
-            p.parent.mkdir(parents=True, exist_ok=True)
-            p.write_bytes(audio_bytes)
+            freq = 440
+            self._generate_offline_wav(save_path, freq=freq)
+            return save_path.read_bytes()
 
-        return audio_bytes
+        return None
+
+    def play_wav_file(self, wav_path: Path):
+        """
+        Plays the WAV audio file out loud on speakers.
+        """
+        if not self.play_audio:
+            return
+
+        if HAS_WINSOUND and wav_path.exists():
+            try:
+                # SND_FILENAME plays WAV synchronously or asynchronously
+                winsound.PlaySound(str(wav_path), winsound.SND_FILENAME)
+            except Exception as e:
+                print(f"[AudioPlayer] Playback error: {e}")
 
     async def speak_seat_utterance(
         self,
@@ -91,17 +159,40 @@ class HiggsTTSClient:
         text: str,
         turn: int,
         round_num: int,
-    ) -> Optional[bytes]:
+        emotion: Optional[str] = None,
+    ) -> Optional[Path]:
         """
-        Synthesizes a bot's spoken line using their designated seat voice.
+        Synthesizes and plays a player's line out loud in their designated seat voice.
         """
         voice = self.get_voice_for_seat(seat)
-        save_file = None
-        if self.cache_dir:
-            save_file = str(self.cache_dir / f"turn_{turn}_round_{round_num}_seat_{seat}.wav")
+        save_file = self.cache_dir / f"turn_{turn + 1}_round_{round_num + 1}_seat_{seat}.wav"
 
-        try:
-            return await self.synthesize(text=text, voice=voice, save_path=save_file)
-        except Exception as e:
-            print(f"[HiggsTTS] Failed to synthesize seat {seat} ({voice}): {e}")
-            return None
+        # Determine emotional tone if not provided
+        if not emotion:
+            lower = text.lower()
+            if "suspect" in lower or "make sure" in lower:
+                emotion = "suspicious"
+            elif "loyal" in lower or "trustworthy" in lower:
+                emotion = "confident"
+            elif "why" in lower or "protest" in lower:
+                emotion = "defensive"
+
+        print(f"  [Higgs TTS] Synthesizing Player {seat} (Voice: {voice}, Emotion: {emotion or 'neutral'})...")
+
+        # Synthesize audio
+        await self.synthesize(
+            text=text,
+            voice=voice,
+            save_path=save_file,
+            emotion=emotion,
+        )
+
+        # Play audio out loud if file exists
+        if save_file.exists():
+            print(f"  [Higgs TTS Audio Out] Playing audio for Player {seat} ({save_file.name})")
+            # Run playback in background thread so it doesn't freeze the asyncio loop
+            loop = asyncio.get_event_loop()
+            await loop.run_in_executor(None, self.play_wav_file, save_file)
+            return save_file
+
+        return None
