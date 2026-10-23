@@ -19,6 +19,10 @@ from typing import Dict, Optional, Tuple
 from pathlib import Path
 import aiohttp
 
+from dotenv import load_dotenv
+
+load_dotenv()
+
 try:
     import winsound
     HAS_WINSOUND = True
@@ -59,12 +63,15 @@ class HiggsTTSClient:
         cache_dir: str = "audio_cache",
         play_audio: bool = True,
     ):
-        self.api_key = api_key or os.getenv("BOSON_API_KEY", "")
+        self.api_key = (api_key or os.getenv("BOSON_API_KEY", "")).strip()
         self.model = model
         self.seat_voices = seat_voices or DEFAULT_SEAT_VOICES
         self.cache_dir = Path(cache_dir)
         self.cache_dir.mkdir(parents=True, exist_ok=True)
         self.play_audio = play_audio
+
+        if not self.api_key:
+            print("[Higgs TTS Notice] No BOSON_API_KEY found in .env — playing synthesized offline tones (beeps). Set BOSON_API_KEY in .env to hear real voices.")
 
     def get_voice_for_seat(self, seat: int) -> str:
         return self.seat_voices.get(seat, "default")
@@ -94,18 +101,18 @@ class HiggsTTSClient:
         voice: str = "default",
         save_path: Optional[Path] = None,
         emotion: Optional[str] = None,
+        seat: int = 0,
     ) -> Optional[bytes]:
         """
         Synthesizes text into audio bytes via Boson Higgs TTS 3.
         Supports Higgs inline emotion tags (e.g. <|emotion:suspicious|>).
         """
-        # Inject Higgs emotion tag if specified and not already present
         formatted_text = text
         if emotion and not text.startswith("<|"):
             formatted_text = f"<|emotion:{emotion}|>{text}"
 
         # If API key is present, call live Boson API
-        if self.api_key and self.api_key.startswith("bai-"):
+        if self.api_key:
             headers = {
                 "Authorization": f"Bearer {self.api_key}",
                 "Content-Type": "application/json",
@@ -127,13 +134,13 @@ class HiggsTTSClient:
                             return audio_bytes
                         else:
                             err_text = await resp.text()
-                            print(f"[HiggsTTS Warning] API returned {resp.status}: {err_text}")
+                            print(f"[Higgs TTS Error] API returned HTTP {resp.status}: {err_text}")
             except Exception as e:
-                print(f"[HiggsTTS Error] Connection failed: {e}")
+                print(f"[Higgs TTS Error] Connection failed: {e}")
 
-        # Fallback to local audio generation so workflow never blocks
+        # Fallback to local audio tone generation if key missing or failed
         if save_path:
-            freq = 440
+            freq = SEAT_TONE_FREQS.get(seat, 440)
             self._generate_offline_wav(save_path, freq=freq)
             return save_path.read_bytes()
 
@@ -185,6 +192,7 @@ class HiggsTTSClient:
             voice=voice,
             save_path=save_file,
             emotion=emotion,
+            seat=seat,
         )
 
         # Play audio out loud if file exists
