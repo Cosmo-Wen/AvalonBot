@@ -342,7 +342,7 @@ async def transcribe_audio_file(
     """
     Transcribes PCM WAV audio bytes using Boson AI Higgs STT 3.1.
     """
-    api_key = (api_key or os.getenv("BOSON_API_KEY") or os.getenv("BOSON_API_KEY_1") or "").strip()
+    api_key = (api_key or os.getenv("BOSON_API_KEY_4") or os.getenv("BOSON_API_KEY") or os.getenv("BOSON_API_KEY_1") or "").strip()
     if not api_key:
         return ""
 
@@ -436,7 +436,7 @@ class HumanVoiceAgent(Agent):
         self.is_human = True
         self.use_mic = use_mic and HAS_SOUNDDEVICE
         self.mic_duration = mic_duration
-        self.api_key = (api_key or os.getenv("BOSON_API_KEY") or os.getenv("BOSON_API_KEY_1") or "").strip()
+        self.api_key = (api_key or os.getenv("BOSON_API_KEY_4") or os.getenv("BOSON_API_KEY") or os.getenv("BOSON_API_KEY_1") or "").strip()
         self.name_to_id = name_to_id or dict(DEFAULT_SEAT_NAMES)
 
     def set_private_info(self, info: Dict[str, Any]):

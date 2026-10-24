@@ -6,7 +6,7 @@ voice participant (`avalon-voice-{seat}`) over a LiveKit data stream (`DataStrea
 24 kHz 16-bit mono PCM), and republishes that audio with its video. The browser joins the same room
 as a subscriber and renders each seat's video and audio.
 
-Requires BOSON_API_KEY_1 through BOSON_API_KEY_4 (one account per seat), LIVEKIT_URL,
+Requires BOSON_API_KEY_1 through BOSON_API_KEY_3 for the faces. Key 4 is speech only. LIVEKIT_URL,
 LIVEKIT_API_KEY, LIVEKIT_API_SECRET and `pip install livekit-agents livekit-api`.
 Without them, `is_available` is False and the frontend falls back to portraits plus WebSocket audio.
 """
@@ -50,6 +50,7 @@ SESSION_FILE = Path(__file__).with_name("avatar_sessions.json")
 
 # GET /v1/avatars on every key returns only these three public faces.
 # The same preset cannot run twice on one key, so a repeated face uses another key.
+# Key 4 is not a face account: it could not start a session. Speech uses it.
 # Seat: (avatar id, BOSON_API_KEY slot). BOSON_AVATAR_<seat> still overrides the id.
 SEAT_FACES = [
     ("builtin_james_v1", 1),

@@ -24,7 +24,7 @@ class HiggsRealtimeManager:
     WS_REALTIME_URL: str = "wss://api.boson.ai/v1/realtime/"
 
     def __init__(self, api_key: Optional[str] = None):
-        self.api_key = api_key or os.getenv("BOSON_API_KEY") or os.getenv("BOSON_API_KEY_1") or ""
+        self.api_key = api_key or os.getenv("BOSON_API_KEY_4") or os.getenv("BOSON_API_KEY") or os.getenv("BOSON_API_KEY_1") or ""
 
     async def mint_ephemeral_token(self, expires_seconds: int = 600) -> Dict[str, Any]:
         """

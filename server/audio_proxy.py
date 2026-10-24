@@ -15,7 +15,8 @@ from dotenv import load_dotenv
 load_dotenv()
 
 def _first_boson_key() -> str:
-    for name in ("BOSON_API_KEY", "BOSON_API_KEY_1", "BOSON_API_KEY_2", "BOSON_API_KEY_3", "BOSON_API_KEY_4"):
+    """Speech uses key 4. Keys 1–3 stay on the live faces."""
+    for name in ("BOSON_API_KEY_4", "BOSON_API_KEY", "BOSON_API_KEY_1"):
         value = os.getenv(name, "").strip()
         if value:
             return value

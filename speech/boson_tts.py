@@ -106,7 +106,7 @@ class HiggsTTSClient:
         cache_dir: str = "audio_cache",
         play_audio: bool = True,
     ):
-        self.api_key = (api_key or os.getenv("BOSON_API_KEY") or os.getenv("BOSON_API_KEY_1") or "").strip()
+        self.api_key = (api_key or os.getenv("BOSON_API_KEY_4") or os.getenv("BOSON_API_KEY") or os.getenv("BOSON_API_KEY_1") or "").strip()
         self.model = model
         self.seat_voices = seat_voices or DEFAULT_SEAT_VOICES
         self.cache_dir = Path(cache_dir)
@@ -114,7 +114,7 @@ class HiggsTTSClient:
         self.play_audio = play_audio
 
         if not self.api_key:
-            print("[Higgs TTS Notice] No BOSON_API_KEY found in .env — playing synthesized offline tones (beeps). Set BOSON_API_KEY in .env to hear real voices.")
+            print("[Higgs TTS Notice] No Boson speech key found in .env — playing synthesized offline tones (beeps). Set BOSON_API_KEY_4 in .env to hear real voices.")
 
     def get_voice_for_seat(self, seat: int) -> str:
         if seat == -1:
