@@ -347,9 +347,17 @@ async def run_live_game(session: GameSession, human_seat: Optional[int] = None) 
         seq = int(data.pop("seq", 0))
         if event_type in ("utterance", "evil_chat"):
             await session.send(event_type, data, seq)
-            # Only synthesize voice if speaker is not the human player
-            if human_seat is None or data.get("speaker") != human_seat:
-                await session.speak(data["speaker"], data["text"], seq)
+            speaker = data.get("speaker")
+            if speaker != human_seat:
+                await session.speak(speaker, data["text"], seq)
+            else:
+                speak_audio = getattr(session.human_agent, "speak_audio", True)
+                if session.voice and speak_audio:
+                    await session.speak(speaker, data["text"], seq)
+                else:
+                    await session.send("speaking", {"seat": speaker, "active": True}, seq)
+                    await session.sleep(3.0)
+                    await session.send("speaking", {"seat": speaker, "active": False}, seq)
         elif event_type in ("team_proposed", "team_vote_result", "quest_result"):
             data["votes"] = {str(p): v for p, v in data.get("votes", {}).items()}
             await session.send(event_type, data, seq)
