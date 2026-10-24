@@ -5,6 +5,8 @@ LLM agents playing a 5-player game of **The Resistance: Avalon** by voice. They 
 Each agent keeps a **belief graph**: its own estimate of how likely each other player is to be evil, plus the evidence behind it (votes, team proposals, accusations), tagged by turn.
 
 > Built for the Boson AI hackathon (Oct 2026). Voice runs on Higgs TTS and Higgs Realtime.
+> 
+> 📖 **Deep Dive:** See [ARCHITECTURE_AND_DECISIONS.md](ARCHITECTURE_AND_DECISIONS.md) for the complete design log, engineering choices, evaluation math, and empirical discoveries regarding Boson AI's speech tags.
 
 ## Goals
 
