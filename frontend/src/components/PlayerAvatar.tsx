@@ -55,6 +55,13 @@ function Emblem({ seat }: { seat: number }) {
   );
 }
 
+function stripTtsTokens(text: string): string {
+  return text
+    .replace(/<\|[^|]*\|>/g, "")
+    .replace(/\s{2,}/g, " ")
+    .trim();
+}
+
 export default function PlayerAvatar({ player, isLeader, isOnTeam, vote, showRole, videoTrack, audioTrack, muted = false, level, width }: PlayerAvatarProps) {
   const color = SEAT_COLORS[player.seat];
   const speaking = player.isSpeaking || level > 0.05;
@@ -89,6 +96,24 @@ export default function PlayerAvatar({ player, isLeader, isOnTeam, vote, showRol
             </div>
           )}
         </div>
+
+        {/* Floating Speech Bubble when Speaking */}
+        {speaking && player.lastUtterance && (
+          <div
+            className="pointer-events-none absolute -top-20 left-1/2 -translate-x-1/2 z-40 w-48 sm:w-56 rounded-xl border border-medieval-gold/70 bg-[#0a0a0fed] p-2 shadow-2xl backdrop-blur-md animate-fade-in text-center"
+            style={{
+              boxShadow: `0 0 20px ${color}50, inset 0 0 10px rgba(0,0,0,0.8)`,
+            }}
+          >
+            <div className="font-body text-[11px] leading-snug text-medieval-parchment font-medium italic">
+              "{stripTtsTokens(player.lastUtterance)}"
+            </div>
+            <div
+              className="absolute -bottom-1.5 left-1/2 -translate-x-1/2 h-0 w-0 border-x-4 border-x-transparent border-t-4"
+              style={{ borderTopColor: color }}
+            />
+          </div>
+        )}
 
         {isLeader && (
           <div className="absolute -top-3.5 left-1/2 -translate-x-1/2" title="Leader">

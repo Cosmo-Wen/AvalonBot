@@ -94,7 +94,13 @@ function reduceMessage(state: GameState, type: string, seq: number, d: Data): Ga
     case "utterance":
     case "evil_chat": {
       const event = { type, speaker: d.speaker as number, text: d.text as string, seq } as GameEvent;
-      return { ...state, events: [...state.events, event] };
+      return {
+        ...state,
+        events: [...state.events, event],
+        players: state.players.map((p) =>
+          p.seat === (d.speaker as number) ? { ...p, lastUtterance: d.text as string } : p
+        ),
+      };
     }
 
     case "speaking":

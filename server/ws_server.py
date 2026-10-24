@@ -200,7 +200,10 @@ class GameSession:
             await self.send("audio", {"speaker": seat, "audio": wav_b64, "format": "wav"}, seq)
             await self.sleep(wav_seconds(base64.b64decode(wav_b64)) + 0.3)
         else:
-            await self.sleep(min(6.0, 1.2 + 0.045 * len(text.split()) * 6))
+            if seat == self.human_seat:
+                await self.sleep(0.8)
+            else:
+                await self.sleep(min(3.0, 1.0 + 0.05 * len(text.split())))
         await self.send("speaking", {"seat": seat, "active": False}, seq)
 
 
@@ -356,7 +359,7 @@ async def run_live_game(session: GameSession, human_seat: Optional[int] = None) 
                     await session.speak(speaker, data["text"], seq)
                 else:
                     await session.send("speaking", {"seat": speaker, "active": True}, seq)
-                    await session.sleep(3.0)
+                    await session.sleep(0.8)
                     await session.send("speaking", {"seat": speaker, "active": False}, seq)
         elif event_type in ("team_proposed", "team_vote_result", "quest_result"):
             data["votes"] = {str(p): v for p, v in data.get("votes", {}).items()}

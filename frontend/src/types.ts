@@ -16,6 +16,7 @@ export interface Player {
   side?: PlayerSide;
   isSpeaking: boolean;
   audioLevel: number;
+  lastUtterance?: string;
 }
 
 /** quest is 1-based everywhere in the UI. */

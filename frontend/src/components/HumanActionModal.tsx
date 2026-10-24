@@ -154,10 +154,9 @@ export default function HumanActionModal({ prompt, onRespond }: HumanActionModal
   const handleDiscussionSubmit = (e?: React.FormEvent) => {
     if (e) e.preventDefault();
     stopPushToTalk();
-    const finalTxt = discussionText.trim();
-    if (!finalTxt) {
-      return;
-    }
+    const finalTxt =
+      discussionText.trim() ||
+      "I am a loyal servant of Arthur and want what is best for the realm.";
     onRespond("discussion", {
       text: finalTxt,
       speak_audio: speakVoice,
@@ -400,10 +399,6 @@ export default function HumanActionModal({ prompt, onRespond }: HumanActionModal
             <div className="w-full">
               <button
                 type="button"
-                onMouseDown={startPushToTalk}
-                onMouseUp={stopPushToTalk}
-                onTouchStart={startPushToTalk}
-                onTouchEnd={stopPushToTalk}
                 onClick={togglePushToTalk}
                 className={`flex items-center justify-center gap-3 w-full rounded-2xl py-3 px-4 font-display text-xs font-bold transition-all duration-200 border select-none cursor-pointer ${
                   isRecording
@@ -414,10 +409,10 @@ export default function HumanActionModal({ prompt, onRespond }: HumanActionModal
                 <span className="text-xl">{isRecording ? "🔴" : "🎙️"}</span>
                 <div className="flex flex-col text-left">
                   <span className="text-xs uppercase tracking-wider font-bold">
-                    {isRecording ? "Recording... (Release or Click to Stop)" : "Push-to-Talk (Hold or Click to Speak)"}
+                    {isRecording ? "Listening... (Click to Finish Speaking)" : "Click to Speak with Microphone (STT)"}
                   </span>
                   <span className="text-[10px] font-normal text-medieval-silver/80">
-                    {isRecording ? "Listening to your microphone... transcribing live" : "Press & hold (or click) to speak with your microphone"}
+                    {isRecording ? "Transcribing live... click when done speaking" : "Click to start speech transcription, speak, then click submit"}
                   </span>
                 </div>
               </button>
@@ -497,12 +492,7 @@ export default function HumanActionModal({ prompt, onRespond }: HumanActionModal
             <div className="w-full pt-1 flex flex-col gap-1.5">
               <button
                 type="submit"
-                disabled={!discussionText.trim() && !isRecording}
-                className={`w-full rounded-2xl py-3.5 font-display text-xs font-bold tracking-wider transition-all duration-200 shadow-lg ${
-                  discussionText.trim()
-                    ? "bg-medieval-gold text-black hover:bg-[#e8c95a] active:scale-98 shadow-medieval-gold/25 cursor-pointer"
-                    : "bg-medieval-gold/30 text-black/40 cursor-not-allowed border border-medieval-gold/20"
-                }`}
+                className="w-full rounded-2xl py-3.5 font-display text-xs font-bold tracking-wider transition-all duration-200 shadow-lg bg-medieval-gold text-black hover:bg-[#e8c95a] active:scale-98 shadow-medieval-gold/25 cursor-pointer"
               >
                 🚀 SUBMIT STATEMENT & PROCEED
               </button>
