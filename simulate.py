@@ -6,6 +6,7 @@ Usage:
   python simulate.py --pipeline         # Low-latency pipelined synthesis (pre-synthesizes upcoming speakers)
   python simulate.py --mute             # Fast simulation without playing audio to speakers
   python simulate.py --human-seat 0     # Human takes seat 0 via microphone & Boson STT 3.1
+  python simulate.py --human-seat 0 --no-mic # Human takes seat 0 via keyboard console input
 """
 
 import sys
@@ -23,7 +24,7 @@ async def main():
     enable_playback = "--mute" not in sys.argv
     use_pipeline = "--pipeline" in sys.argv
 
-    # Check for human participant seat
+    # Check for human participant seat and microphone preference
     human_seat = None
     if "--human-seat" in sys.argv:
         try:
@@ -32,12 +33,19 @@ async def main():
         except (IndexError, ValueError):
             human_seat = 0
 
+    no_mic = "--no-mic" in sys.argv or "--keyboard" in sys.argv
+    use_mic = not no_mic
+
     print("=" * 60)
     print("AvalonBot Game Simulation with Boson AI Voice Pipeline")
     print("=" * 60)
     print(f"  Audio Playback:    {'ENABLED' if enable_playback else 'DISABLED (--mute)'}")
     print(f"  Pipelining Mode:   {'ACTIVE (--pipeline)' if use_pipeline else 'SEQUENTIAL'}")
-    print(f"  Human Player Seat: {'None (all AI)' if human_seat is None else f'Player {human_seat} (Microphone + STT)'}")
+    if human_seat is not None:
+        mode_label = "Keyboard Console (--no-mic)" if no_mic else "Microphone + Boson STT 3.1"
+        print(f"  Human Player Seat: Player {human_seat} ({mode_label})")
+    else:
+        print("  Human Player Seat: None (all AI)")
     print(f"  Boson API Budget:  {global_budget_tracker.remaining_budget()} calls remaining (cap: {global_budget_tracker.max_calls})")
     print("=" * 60)
 
@@ -75,7 +83,7 @@ async def main():
             agents[i] = HumanVoiceAgent(
                 player_id=i,
                 role=Role.LOYAL_SERVANT,
-                use_mic=True,
+                use_mic=use_mic,
             )
         else:
             agents[i] = HeuristicAgent(

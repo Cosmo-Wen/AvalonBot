@@ -11,8 +11,11 @@ Without them, `is_available` is False and the frontend falls back to portraits p
 """
 
 import asyncio
-import audioop  # removed in Python 3.13; this project runs on 3.12
 import io
+try:
+    import audioop
+except ImportError:
+    import audioop_lts as audioop
 import os
 import wave
 from datetime import timedelta

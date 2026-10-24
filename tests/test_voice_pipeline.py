@@ -18,7 +18,13 @@ from speech.budget import BosonBudgetTracker
 from speech.emotion_mapper import GameStateEmotionMapper, GameStateDelivery
 from speech.boson_tts import HiggsTTSClient
 from speech.audio_pipeline import AudioPipeline
-from speech.human_agent import HumanVoiceAgent
+from speech.human_agent import (
+    HumanVoiceAgent,
+    parse_spoken_team_proposal,
+    parse_spoken_vote,
+    parse_spoken_quest_vote,
+    parse_spoken_assassination_target,
+)
 
 
 def test_budget_tracker_limits_and_records():
@@ -223,4 +229,104 @@ def test_runner_helpers_and_human_bypass():
     assert runner._format_team_names([0]) == "Player 0"
     assert runner._format_team_names([0, 1]) == "Player 0 and Player 1"
     assert runner._format_team_names([0, 2, 4]) == "Player 0, Player 2, and Player 4"
+
+
+def test_parse_spoken_team_proposal():
+    # Direct digits and word numbers
+    assert parse_spoken_team_proposal("I propose player 1 and player 3", team_size=2) == [1, 3]
+    assert parse_spoken_team_proposal("Player zero and player one", team_size=2) == [0, 1]
+    assert parse_spoken_team_proposal("0, 2", team_size=2) == [0, 2]
+    assert parse_spoken_team_proposal("P1 and P4", team_size=2) == [1, 4]
+
+    # Character names
+    assert parse_spoken_team_proposal("Marcus, Jake, and Chloe", team_size=3) == [0, 2, 4]
+    assert parse_spoken_team_proposal("Eleanor and Oliver", team_size=2) == [1, 3]
+
+    # Self references ("myself", "me")
+    assert parse_spoken_team_proposal("myself and Eleanor", team_size=2, human_id=0) == [0, 1]
+    assert parse_spoken_team_proposal("me and player 3", team_size=2, human_id=2) == [2, 3]
+
+    # Exclusions ("not player 0")
+    assert parse_spoken_team_proposal("Not Player 0, I want Player 1 and Player 3", team_size=2) == [1, 3]
+    assert parse_spoken_team_proposal("without Eleanor, take 0 and 2", team_size=2) == [0, 2]
+
+    # Invalid / Ambiguous proposals return None
+    assert parse_spoken_team_proposal("Just Player 1", team_size=2) is None  # too few
+    assert parse_spoken_team_proposal("Player 0, 1, 2, 3", team_size=2) is None  # too many
+    assert parse_spoken_team_proposal("Player 9 and 0", team_size=2) is None  # out of bounds
+    assert parse_spoken_team_proposal("", team_size=2) is None
+
+
+def test_parse_spoken_vote():
+    # Direct affirmative
+    assert parse_spoken_vote("approve") is True
+    assert parse_spoken_vote("yes") is True
+    assert parse_spoken_vote("aye") is True
+    assert parse_spoken_vote("yeah") is True
+    assert parse_spoken_vote("I vote yes") is True
+    assert parse_spoken_vote("I agree with this team") is True
+    assert parse_spoken_vote("Looks good to me") is True
+    assert parse_spoken_vote("Let's do it") is True
+
+    # Direct negative
+    assert parse_spoken_vote("reject") is False
+    assert parse_spoken_vote("no") is False
+    assert parse_spoken_vote("nay") is False
+    assert parse_spoken_vote("I vote no") is False
+    assert parse_spoken_vote("I disagree") is False
+    assert parse_spoken_vote("Definitely oppose this team") is False
+    assert parse_spoken_vote("It is a no from me") is False
+
+    # Negations
+    assert parse_spoken_vote("I do not approve") is False
+    assert parse_spoken_vote("I don't approve of this team") is False
+    assert parse_spoken_vote("Cannot support this proposal") is False
+    assert parse_spoken_vote("I will not agree") is False
+    assert parse_spoken_vote("I don't reject this team") is True
+
+    # Ambiguous
+    assert parse_spoken_vote("What do you think about Player 2?") is None
+    assert parse_spoken_vote("") is None
+
+
+def test_parse_spoken_quest_vote():
+    # Pass
+    assert parse_spoken_quest_vote("pass") is True
+    assert parse_spoken_quest_vote("succeed") is True
+    assert parse_spoken_quest_vote("success") is True
+    assert parse_spoken_quest_vote("yes") is True
+    assert parse_spoken_quest_vote("clean quest") is True
+    assert parse_spoken_quest_vote("don't fail") is True
+
+    # Fail
+    assert parse_spoken_quest_vote("fail") is False
+    assert parse_spoken_quest_vote("sabotage") is False
+    assert parse_spoken_quest_vote("betray") is False
+    assert parse_spoken_quest_vote("no") is False
+    assert parse_spoken_quest_vote("don't pass") is False
+
+    # Ambiguous
+    assert parse_spoken_quest_vote("hello world") is None
+    assert parse_spoken_quest_vote("") is None
+
+
+def test_parse_spoken_assassination_target():
+    assert parse_spoken_assassination_target("I think Player 2 is Merlin", num_players=5, assassin_id=3) == 2
+    assert parse_spoken_assassination_target("Eleanor is definitely Merlin", num_players=5, assassin_id=3) == 1
+    assert parse_spoken_assassination_target("Kill Chloe", num_players=5, assassin_id=3) == 4
+    assert parse_spoken_assassination_target("Player 0", num_players=5, assassin_id=3) == 0
+
+    # Assassin cannot assassinate themselves
+    assert parse_spoken_assassination_target("Oliver is Merlin", num_players=5, assassin_id=3) is None
+
+    # Ambiguous
+    assert parse_spoken_assassination_target("I am not sure yet", num_players=5, assassin_id=3) is None
+
+
+def test_human_agent_quest_vote_good_autopass():
+    agent = HumanVoiceAgent(player_id=1, role=Role.LOYAL_SERVANT, use_mic=False)
+    # Good player voting on quest
+    vote = asyncio.run(agent.vote_on_quest(turn=0, team=[0, 1]))
+    assert vote is True
+
 
