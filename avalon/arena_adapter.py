@@ -65,7 +65,7 @@ class ArenaGraphAdapter:
     Feed arena events in order with `feed(event)`; read `state.memories` at any point.
 
     `talk_edges` (hand-labelled or extracted elsewhere) are added after the discussion they cite,
-    before the next proposal. Without them, memories hold every action edge and the raw talk,
+    before the next proposal: to the edge's `owner` only if it has one, otherwise to every player. Without them, memories hold every action edge and the raw talk,
     but no talk edges.
     """
 
@@ -74,6 +74,7 @@ class ArenaGraphAdapter:
         self.belief_mode = belief_mode
         self.merlin_graph = merlin_graph
         self.pending_edges = sorted(talk_edges, key=lambda raw: max(raw["sources"]))
+        self.dropped_edges = 0  # owned (extracted) edges the player's memory rejected, as it did live
         self.pending_votes: Optional[Dict[int, bool]] = None
         self.quest_round: Dict[int, int] = {}
         self.engine: Optional[AvalonEngine] = None
@@ -92,9 +93,13 @@ class ArenaGraphAdapter:
     def _add_edges_up_to(self, seq: int) -> None:
         while self.pending_edges and max(self.pending_edges[0]["sources"]) <= seq:
             raw = self.pending_edges.pop(0)
-            for memory in self.memories.values():
-                _, dropped = memory.add_talk_edges([raw])
-                if dropped:
+            # an edge with an "owner" came from that player's own extraction call; others go to everyone
+            owners = [raw["owner"]] if raw.get("owner") is not None else list(self.memories)
+            for owner in owners:
+                _, dropped = self.memories[owner].add_talk_edges([raw])
+                if dropped and raw.get("owner") is not None:
+                    self.dropped_edges += dropped  # the live memory dropped it too
+                elif dropped:
                     raise ValueError(f"Talk edge {raw} does not cite utterances by player {raw['from']}")
 
     def _check(self, step: str, call) -> Any:
