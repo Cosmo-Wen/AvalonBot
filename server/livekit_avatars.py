@@ -176,7 +176,7 @@ class AvatarManager:
                 "publisher_identity": AGENT_IDENTITY,
             },
             "max_duration_seconds": 3600,
-            "output": {"size": "480x640"},
+            "output": {"width": 480, "height": 640},
         }
 
         try:

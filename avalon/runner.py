@@ -73,12 +73,16 @@ class AvalonGameRunner:
         for p in recipients:
             self.agents[p].observe_event(event_type, copy.deepcopy(stamped))
         if self.on_event is not None:
-            self.on_event(event_type, copy.deepcopy(stamped), recipients)
+            result = self.on_event(event_type, copy.deepcopy(stamped), recipients)
+            if asyncio.iscoroutine(result):
+                await result
 
-    def record_private(self, event_type: str, data: Dict[str, Any]) -> None:
+    async def record_private(self, event_type: str, data: Dict[str, Any]) -> None:
         """Reports an event that no player observes to the observer only."""
         if self.on_event is not None:
-            self.on_event(event_type, copy.deepcopy(data), [])
+            result = self.on_event(event_type, copy.deepcopy(data), [])
+            if asyncio.iscoroutine(result):
+                await result
 
     async def run_game(
         self,
@@ -198,7 +202,7 @@ class AvalonGameRunner:
             # Each card is known only to the player who played it
             for p, card in quest_votes.items():
                 self.agents[p].record_own_quest_card(turn, card)
-            self.record_private("quest_cards", {"turn": turn, "team": proposed_team, "cards": dict(quest_votes)})
+            await self.record_private("quest_cards", {"turn": turn, "team": proposed_team, "cards": dict(quest_votes)})
 
             await self.broadcast_event(
                 "quest_result",
@@ -230,7 +234,7 @@ class AvalonGameRunner:
                 target = await self.agents[assassin_id].assassinate()
                 self.log(f"Assassin Player {assassin_id} targets Player {target}!")
                 self.engine.assassinate(assassin=assassin_id, target=target)
-                self.record_private("assassination", {"assassin": assassin_id, "target": target,
+                await self.record_private("assassination", {"assassin": assassin_id, "target": target,
                                                       "hit_merlin": target == merlin_id})
 
         # 3. Game Over & Metrics
