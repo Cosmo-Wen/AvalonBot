@@ -333,8 +333,19 @@ export function useGameSocket(
           dispatch({ type: "GAME_START", data: d });
           break;
         case "role_reveal":
-          dispatch({ type: "ROLE_REVEAL", data: d, seq });
+        case "roles_revealed": {
+          const rawRoles = d.roles as Record<string, { role: string; side: string }> | undefined;
+          if (rawRoles) {
+            const roles: Record<string, string> = {};
+            const sides: Record<string, string> = {};
+            for (const [seat, info] of Object.entries(rawRoles)) {
+              roles[seat] = info.role?.toLowerCase().replace(/ /g, "_") ?? "";
+              sides[seat] = info.side?.toLowerCase() ?? "";
+            }
+            dispatch({ type: "ROLE_REVEAL", data: { roles, sides }, seq });
+          }
           break;
+        }
         case "phase_change":
           dispatch({ type: "PHASE_CHANGE", phase: d.phase as GamePhase });
           break;
@@ -417,16 +428,16 @@ export function useGameSocket(
   const startGame = useCallback(
     (mode: "live" | "replay", replayFile?: string) => {
       dispatch({ type: "RESET" });
-      send({ type: "start_game", data: { mode, replay_file: replayFile } });
+      send({ type: "start_game", mode, replay_file: replayFile });
     },
     [send]
   );
 
-  const pause = useCallback(() => send({ type: "control", data: { action: "pause" } }), [send]);
-  const resume = useCallback(() => send({ type: "control", data: { action: "resume" } }), [send]);
-  const step = useCallback(() => send({ type: "control", data: { action: "step" } }), [send]);
+  const pause = useCallback(() => send({ type: "control", action: "pause" }), [send]);
+  const resume = useCallback(() => send({ type: "control", action: "resume" }), [send]);
+  const step = useCallback(() => send({ type: "control", action: "step" }), [send]);
   const setSpeed = useCallback(
-    (speed: number) => send({ type: "control", data: { action: "speed", value: speed } }),
+    (speed: number) => send({ type: "control", action: "speed", value: speed }),
     [send]
   );
 

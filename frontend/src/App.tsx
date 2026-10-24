@@ -158,7 +158,7 @@ export default function App() {
       {/* Main content grid */}
       <div className="flex-1 w-full max-w-[1440px] mx-auto px-4 md:px-6 py-4 grid grid-cols-1 md:grid-cols-[280px_1fr_320px] gap-4 md:gap-5 min-h-0">
         {/* Left column — Quest Tracker + Belief Graph */}
-        <div className="flex flex-col gap-4 min-h-0 order-2 md:order-1">
+        <div className="flex flex-col gap-4 min-h-0 order-2 md:order-1 overflow-visible">
           <div className="animate-fade-up" style={{ animationDelay: "100ms" }}>
             <QuestTracker
               quests={gameState.quests}
@@ -203,7 +203,7 @@ export default function App() {
               showRoles={showRoles}
               seatVideos={livekit.connected ? livekit.seatVideos : undefined}
             />
-            <div className="absolute inset-0 pointer-events-none flex items-center justify-center">
+            <div className="absolute inset-0 pointer-events-none flex items-center justify-center z-20">
               <VoteOverlay
                 proposal={gameState.currentProposal}
                 phase={gameState.phase}

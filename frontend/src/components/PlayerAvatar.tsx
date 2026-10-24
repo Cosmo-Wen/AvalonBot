@@ -11,35 +11,40 @@ interface PlayerAvatarProps {
   videoStream?: MediaStream | null;
 }
 
-const SILHOUETTES: string[] = [
-  // Seat 0 — crowned king profile
-  "M24 14c0-3.5-2.5-6-6-6s-6 2.5-6 6c0 1.8.8 3.4 2 4.5V22c-3 1-7 3.5-7 7v5h22v-5c0-3.5-4-6-7-7v-3.5c1.2-1.1 2-2.7 2-4.5zm-6-9l-3 4h6l-3-4zm-5 4l-1.5 3h13l-1.5-3h-10z",
-  // Seat 1 — knight helm profile
-  "M14 10c0-2.2 1.8-4 4-4s4 1.8 4 4v2h2c1.1 0 2 .9 2 2v6c0 1.1-.9 2-2 2h-1v2c-2.5 1.5-6 3-6 3s-3.5-1.5-6-3v-2h-1c-1.1 0-2-.9-2-2v-6c0-1.1.9-2 2-2h2v-2zm-3 8h14v-2H11v2z",
-  // Seat 2 — hooded figure (Guinevere)
-  "M18 8c-5 0-9 3-10 7-1 4 0 5 2 6v3c-3 1.5-5 3.5-5 6v4h26v-4c0-2.5-2-4.5-5-6v-3c2-1 3-2 2-6-1-4-5-7-10-7zm0 3c2 0 3.5 1 4 3h-8c.5-2 2-3 4-3z",
-  // Seat 3 — wise elder (bearded)
-  "M18 8c-3.3 0-6 2.7-6 6 0 1.5.6 2.9 1.5 4-.5.5-1 1.2-1 2v4c-3 1.5-5.5 3.5-5.5 6v4h22v-4c0-2.5-2.5-4.5-5.5-6v-4c0-.8-.5-1.5-1-2 .9-1.1 1.5-2.5 1.5-4 0-3.3-2.7-6-6-6zm-2 16c-.5 1-1 2.5-1 4h-2c0-2.5 1-3.5 3-4zm4 0c2 .5 3 1.5 3 4h-2c0-1.5-.5-3-1-4z",
-  // Seat 4 — young knight
-  "M18 9c-3 0-5.5 2.5-5.5 5.5 0 1.7.8 3.2 2 4.2v2.8c-4 1.5-7 4-7 7v5.5h21v-5.5c0-3-3-5.5-7-7v-2.8c1.2-1 2-2.5 2-4.2 0-3-2.5-5.5-5.5-5.5zm-4-3l4-3 4 3h-8z",
+const SEAT_INITIALS = ["At", "Ly", "Gr", "Ph", "So"];
+const SEAT_GRADIENT_PAIRS: [string, string][] = [
+  ["#c9a84c", "#a08030"],  // Arthur — gold
+  ["#6c9bff", "#4a6fcc"],  // Lancelot — blue
+  ["#4cc27e", "#2e9e5b"],  // Guinevere — green
+  ["#e0a83a", "#b8862e"],  // Percival — amber
+  ["#a48bff", "#7b5fcc"],  // Galahad — purple
 ];
 
 function PortraitSilhouette({ seat, size }: { seat: number; size: number }) {
-  const scale = size / 36;
+  const [c1, c2] = SEAT_GRADIENT_PAIRS[seat % SEAT_GRADIENT_PAIRS.length];
+  const gradientId = `seat-grad-${seat}`;
   return (
-    <svg
-      width={size}
-      height={size}
-      viewBox="0 0 36 36"
-      fill="none"
-      className="opacity-60"
-    >
-      <path
-        d={SILHOUETTES[seat % SILHOUETTES.length]}
-        fill={SEAT_COLORS[seat]}
-        fillOpacity="0.7"
-        transform={`scale(${scale > 1 ? 1 : scale})`}
-      />
+    <svg width={size} height={size} viewBox="0 0 60 60" fill="none">
+      <defs>
+        <linearGradient id={gradientId} x1="0" y1="0" x2="0" y2="1">
+          <stop offset="0%" stopColor={c1} stopOpacity="0.25" />
+          <stop offset="100%" stopColor={c2} stopOpacity="0.15" />
+        </linearGradient>
+      </defs>
+      <circle cx="30" cy="30" r="28" fill={`url(#${gradientId})`} stroke={c1} strokeWidth="1" strokeOpacity="0.2" />
+      <text
+        x="30"
+        y="33"
+        textAnchor="middle"
+        dominantBaseline="central"
+        fill={c1}
+        fillOpacity="0.85"
+        fontSize="20"
+        fontFamily="Cinzel, serif"
+        fontWeight="600"
+      >
+        {SEAT_INITIALS[seat]}
+      </text>
     </svg>
   );
 }

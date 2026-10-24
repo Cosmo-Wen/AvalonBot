@@ -78,7 +78,7 @@ export const ROLE_DISPLAY: Record<PlayerRole, string> = {
   assassin: "Assassin",
 };
 
-export const SEAT_NAMES = ["Arthur", "Lancelot", "Guinevere", "Percival", "Galahad"] as const;
+export const SEAT_NAMES = ["Atlas", "Lyra", "Griffin", "Phoenix", "Solara"] as const;
 
 export const QUEST_SIZES = [2, 3, 2, 3, 3] as const;
 

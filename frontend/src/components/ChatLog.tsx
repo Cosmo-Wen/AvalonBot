@@ -60,12 +60,19 @@ function SystemEntry({ text }: { text: string }) {
   );
 }
 
+function stripTtsTokens(text: string): string {
+  return text
+    .replace(/<\|[^|]*\|>/g, "")
+    .replace(/\s{2,}/g, " ")
+    .trim();
+}
+
 function formatEvent(event: GameEvent): { speaker?: number; text: string; isSystem: boolean } {
   switch (event.type) {
     case "utterance":
-      return { speaker: event.speaker, text: event.text, isSystem: false };
+      return { speaker: event.speaker, text: stripTtsTokens(event.text), isSystem: false };
     case "evil_chat":
-      return { speaker: event.speaker, text: `[Evil] ${event.text}`, isSystem: false };
+      return { speaker: event.speaker, text: stripTtsTokens(`[Evil] ${event.text}`), isSystem: false };
     case "team_proposed":
       return {
         text: `Player ${event.leader} proposes team [${event.team.join(", ")}] for Quest ${event.quest + 1}`,
