@@ -136,6 +136,8 @@ class PlayerMemory:
         self.notes: Dict[int, str] = {}
         self.free_notes: List[str] = []
         self.belief_fallbacks = 0
+        # how each LLM P(evil) update was settled: "llm", "llm_retry", or "rule_fallback"
+        self.belief_paths: Dict[str, int] = {}
         self.constraint_resets = 0
 
     # Layer 1: observation log
@@ -281,7 +283,10 @@ class PlayerMemory:
         if text and text.strip():
             self.free_notes.append(" ".join(text.split()))
 
-    def apply_llm_beliefs(self, raw: Dict[Any, Any]) -> List[str]:
+    def record_belief_path(self, path: str) -> None:
+        self.belief_paths[path] = self.belief_paths.get(path, 0) + 1
+
+    def apply_llm_beliefs(self, raw: Dict[Any, Any], check_evidence: bool = False) -> List[str]:
         """Checks and applies P(evil) proposed by the LLM. Returns errors (empty on success)."""
         if self.beliefs is None:
             return ["this player keeps no P(evil)"]
@@ -289,6 +294,10 @@ class PlayerMemory:
             p_evil = {int(k): float(v) for k, v in (raw or {}).items()}
         except (TypeError, ValueError):
             return ["p_evil must map player ids to numbers"]
+        if check_evidence:
+            errors = self.beliefs.validate(p_evil) or self.beliefs.evidence_errors(p_evil)
+            if errors:
+                return errors
         return self.beliefs.set_llm(p_evil)
 
     def fall_back_to_rule(self) -> None:

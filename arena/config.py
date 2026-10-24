@@ -19,15 +19,15 @@ NON_SEMANTIC_FIELDS = {"concurrency", "num_games", "claude_bin", "cli_max_parall
 
 class SeatSpec(BaseModel):
     r"""One participant in the game. Seat shuffling permutes these across seats."""
-    agent: Literal["llm", "search", "recon"]
-    provider: Literal["claude_cli", "anthropic", "openai", "fake"] = "claude_cli"
+    agent: Literal["llm"] = "llm"
+    # openai: an OpenAI-compatible endpoint (AvalonBot's LLMAgent); fake: AvalonBot's offline
+    # HeuristicAgent. claude_cli and anthropic are text-only backends, usable by play functions
+    # that don't need tool calls.
+    provider: Literal["claude_cli", "anthropic", "openai", "fake"] = "openai"
     # claude_cli: a Claude Code alias or id (haiku / sonnet / opus); anthropic: an API model id
     # (the aliases haiku / sonnet / opus also work). Defaults per provider: DEFAULT_MODELS.
     model: Optional[str] = None
     effort: Optional[Literal["low", "medium", "high", "xhigh", "max"]] = "medium"  # reasoning effort; null to omit
-    planner_model: Optional[str] = None  # search/recon planner's model; defaults to `model`
-    planner_num_rollout: int = 100       # search/recon MCTS rollouts per decision (CPU-bound)
-    planner_node_budget: int = 100       # search/recon MCTS node budget per decision
     name: Optional[str] = None           # stable participant id; defaults to "<agent>:<model>#<index>"
 
 
@@ -41,8 +41,9 @@ class ArenaConfig(BaseModel):
     shuffle_roles: bool = True
     shuffle_seats: bool = True
     random_leader: bool = True
-    discussion: bool = True
-    reply_max_words: Optional[int] = None  # ask every player to keep replies under this many words
+    # AvalonBot condition for the good team; the evil team always plays chat-only (A)
+    condition: Literal["chat_only", "belief_graph", "rule_graph"] = "chat_only"
+    play_fn: str = "avalon.arena_play:play_game"  # "module:function" that plays one game
 
     concurrency: int = 1
     max_game_retries: int = 2

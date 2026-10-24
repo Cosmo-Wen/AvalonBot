@@ -33,6 +33,7 @@ MERLIN_EARLY_ACCUSATION = 2.0
 
 SUM_TOLERANCE = 0.05
 FORCED_TOLERANCE = 0.01
+UNINFORMATIVE_TOLERANCE = 0.01  # P(evil) within this of 0.5 for every opponent counts as "all 0.5"
 
 
 def clip_words(text: str, max_words: int) -> str:
@@ -407,6 +408,38 @@ class PairBelief:
             if team_sum < fails - SUM_TOLERANCE:
                 who = ", ".join(f"P{p}" for p in others)
                 errors.append(f"{who} were on a quest with {fails} fail(s), so their values must sum to at least {fails}, got {team_sum:.2f}")
+        return errors
+
+    def counting_marginals(self) -> Dict[int, float]:
+        """Share of the remaining possible evil pairs that contain each opponent (no vote weights)."""
+        pairs = self.possible_pairs()
+        return {p: sum(p in pair for pair in pairs) / len(pairs) for p in self.opponents}
+
+    def evidence_errors(self, p_evil: Dict[int, float]) -> List[str]:
+        """
+        Rejects valid-but-uninformative P(evil) once the failed quests single players out: all values
+        at 0.5, or a failed quest's members not ranked above every opponent who wasn't on it. A quest
+        only counts when pair counting itself ranks its members above the rest (a 3-player team with 1
+        fail, say, rules out no pair). Before any such evidence, 0.5 for everyone is correct.
+        """
+        counts = self.counting_marginals()
+        if max(counts.values()) - min(counts.values()) < 1e-9:
+            return []
+        errors: List[str] = []
+        if all(abs(v - 0.5) <= UNINFORMATIVE_TOLERANCE for v in p_evil.values()):
+            errors.append("all values are 0.5, which ignores the failed quests")
+        pairs = self.possible_pairs()
+        for members, fails, _ in self.failed_quests:
+            if not all(self._fits(pair, members, fails) for pair in pairs):
+                continue
+            on = [p for p in members if p != self.owner]
+            off = [p for p in self.opponents if p not in on]
+            if not on or not off or min(counts[p] for p in on) <= max(counts[p] for p in off):
+                continue
+            if min(p_evil[p] for p in on) <= max(p_evil[p] for p in off):
+                who_on = ", ".join(f"P{p}" for p in on)
+                who_off = ", ".join(f"P{p}" for p in off)
+                errors.append(f"{who_on} were on a failed quest, so they must be your top suspects, above {who_off}")
         return errors
 
     def set_rule(self) -> None:

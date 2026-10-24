@@ -9,7 +9,7 @@ from collections import Counter, defaultdict
 from .backends import FatalBackendError, UsageLimitReached, make_backend, resolve_claude_bin
 from .config import load_config, load_env_file
 from .events import read_events
-from .runner import run
+from .runner import load_play_fn, run
 
 
 def _parse_shard(s: str):
@@ -48,15 +48,22 @@ def summarize(run_dir: str) -> dict:
             n = by_name[seat["name"]]
             n["games"] += 1
             n["wins"] += int(seat["won"])
-            n["deduction_acc"] += seat["deduction_acc"]
+            if seat.get("deduction_acc") is not None:
+                n["deduction_acc"] += seat["deduction_acc"]
+                n["scored"] = n.get("scored", 0) + 1
             r = by_agent_role[f"{seat['agent']}:{seat['model']} as {seat['role']}"]
             r["games"] += 1
             r["wins"] += int(seat["won"])
 
     def rate(d):
-        return {k: {**v, "win_rate": round(v["wins"] / v["games"], 3),
-                    **({"deduction_acc": round(v["deduction_acc"] / v["games"], 3)} if "deduction_acc" in v else {})}
-                for k, v in sorted(d.items())}
+        out = {}
+        for k, v in sorted(d.items()):
+            row = {"games": v["games"], "wins": v["wins"], "win_rate": round(v["wins"] / v["games"], 3)}
+            if "deduction_acc" in v:  # averaged over the games where this player reported beliefs
+                scored = v.get("scored", 0)
+                row["deduction_acc"] = round(v["deduction_acc"] / scored, 3) if scored else None
+            out[k] = row
+        return out
 
     return {
         "statuses": dict(statuses),
@@ -73,7 +80,8 @@ async def _check(cfg) -> bool:
     print(f"python {sys.version.split()[0]}: " + ("ok" if sys.version_info >= (3, 10) else "need >= 3.10"))
     ok &= sys.version_info >= (3, 10)
     try:
-        from . import game  # noqa: F401  (imports the full agent stack)
+        if cfg is not None:
+            load_play_fn(cfg)  # imports the game and agent stack
         print("imports: ok")
     except Exception as e:
         print(f"imports: FAILED ({type(e).__name__}: {e})")
@@ -86,12 +94,11 @@ async def _check(cfg) -> bool:
         except FatalBackendError as e:
             print(f"claude CLI: {e}")
             return False
-    # one tiny call per distinct (provider, model) a seat or planner will use
+    # one tiny call per distinct (provider, model) a seat will use
     targets = {}
     for s in cfg.seats:
         if s.provider != "fake":
-            for model in {s.model, s.planner_model or s.model}:
-                targets[(s.provider, model)] = s
+            targets[(s.provider, s.model)] = s
     for (provider, model), spec in sorted(targets.items()):
         backend = None
         try:

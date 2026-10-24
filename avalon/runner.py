@@ -8,7 +8,7 @@ Computes evaluation metrics (Win Rate, Spy-ID accuracy, Brier score, Merlin surv
 
 import asyncio
 import copy
-from typing import Dict, Iterable, List, Optional, Any
+from typing import Callable, Dict, Iterable, List, Optional, Any
 from dataclasses import dataclass, field
 
 from .engine import AvalonEngine, Role, Phase, ROLE_NAMES
@@ -31,6 +31,8 @@ class GameMetrics:
     final_p_evil: Dict[int, Dict[int, float]] = field(default_factory=dict)
     belief_fallbacks: Dict[int, int] = field(default_factory=dict)
     constraint_resets: Dict[int, int] = field(default_factory=dict)
+    # how each P(evil) update was settled, per Servant: "llm", "llm_retry", or "rule_fallback"
+    belief_paths: Dict[int, Dict[str, int]] = field(default_factory=dict)
     assassin_p_merlin: Optional[Dict[int, float]] = None
 
 
@@ -45,12 +47,16 @@ class AvalonGameRunner:
         seed: Optional[int] = None,
         tts_client: Optional[HiggsTTSClient] = None,
         verbose: bool = True,
+        on_event: Optional[Callable[[str, Dict[str, Any], List[int]], None]] = None,
     ):
         self.agents = agents
         self.engine = AvalonEngine(seed=seed)
         self.tts_client = tts_client
         self.verbose = verbose
         self.seq = 0
+        # Observer for logging (e.g. the arena harness): sees every event with its recipients,
+        # plus private ones no player observes (quest cards, the assassination).
+        self.on_event = on_event
 
     def log(self, msg: str):
         if self.verbose:
@@ -63,8 +69,16 @@ class AvalonGameRunner:
         """Gives each recipient its own copy of the event, stamped with the next global seq."""
         self.seq += 1
         stamped = dict(data, seq=self.seq)
+        recipients = list(recipients)
         for p in recipients:
             self.agents[p].observe_event(event_type, copy.deepcopy(stamped))
+        if self.on_event is not None:
+            self.on_event(event_type, copy.deepcopy(stamped), recipients)
+
+    def record_private(self, event_type: str, data: Dict[str, Any]) -> None:
+        """Reports an event that no player observes to the observer only."""
+        if self.on_event is not None:
+            self.on_event(event_type, copy.deepcopy(data), [])
 
     async def run_game(
         self,
@@ -105,8 +119,9 @@ class AvalonGameRunner:
             self.log(f"\n--- Quest {turn + 1} | Round {round_num + 1} | Leader: Player {leader} ---")
 
             # Phase 0: Discussion & Proposal
-            # Discussion circular order: leader first, then others
-            discussion_order = [leader] + [(leader + i) % 5 for i in range(1, 5)]
+            # One discussion per quest, before its first proposal (every condition): later proposals
+            # for the same quest go straight to the vote. Roughly halves the calls per game.
+            discussion_order = [leader] + [(leader + i) % 5 for i in range(1, 5)] if round_num == 0 else []
             for p in discussion_order:
                 agent = self.agents[p]
                 utterance = await agent.team_discussion(
@@ -131,7 +146,8 @@ class AvalonGameRunner:
                     )
 
             # Each player reads the discussion into its own memory before the proposal
-            await asyncio.gather(*(a.after_discussion(turn, round_num) for a in self.agents.values()))
+            if discussion_order:
+                await asyncio.gather(*(a.after_discussion(turn, round_num) for a in self.agents.values()))
 
             # Leader proposes team
             proposed_team = await self.agents[leader].propose_team(turn=turn, team_size=req_team_size)
@@ -182,6 +198,7 @@ class AvalonGameRunner:
             # Each card is known only to the player who played it
             for p, card in quest_votes.items():
                 self.agents[p].record_own_quest_card(turn, card)
+            self.record_private("quest_cards", {"turn": turn, "team": proposed_team, "cards": dict(quest_votes)})
 
             await self.broadcast_event(
                 "quest_result",
@@ -213,6 +230,8 @@ class AvalonGameRunner:
                 target = await self.agents[assassin_id].assassinate()
                 self.log(f"Assassin Player {assassin_id} targets Player {target}!")
                 self.engine.assassinate(assassin=assassin_id, target=target)
+                self.record_private("assassination", {"assassin": assassin_id, "target": target,
+                                                      "hit_merlin": target == merlin_id})
 
         # 3. Game Over & Metrics
         self.log("\n" + "=" * 50)
@@ -224,6 +243,7 @@ class AvalonGameRunner:
         final_p_evil: Dict[int, Dict[int, float]] = {}
         belief_fallbacks: Dict[int, int] = {}
         constraint_resets: Dict[int, int] = {}
+        belief_paths: Dict[int, Dict[str, int]] = {}
 
         # Only Loyal Servants hold P(evil)
         for p, agent in self.agents.items():
@@ -235,6 +255,7 @@ class AvalonGameRunner:
             good_brier_scores[p] = brier_score(p_evil, evil_players)
             belief_fallbacks[p] = agent.memory.belief_fallbacks
             constraint_resets[p] = agent.memory.constraint_resets
+            belief_paths[p] = dict(agent.memory.belief_paths)
 
         merlin_survived = (
             self.engine.good_victory is True
@@ -255,5 +276,6 @@ class AvalonGameRunner:
             final_p_evil=final_p_evil,
             belief_fallbacks=belief_fallbacks,
             constraint_resets=constraint_resets,
+            belief_paths=belief_paths,
             assassin_p_merlin=assassin_p_merlin,
         )

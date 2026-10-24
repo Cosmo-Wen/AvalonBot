@@ -103,10 +103,12 @@ def clear_pause(run_dir: str):
         pass
 
 
-def _default_play_fn() -> PlayFn:
-    # imported lazily: pulls in the LLM/agent stack, which tests and `summarize` don't need
-    from .game import play_game
-    return play_game
+def load_play_fn(cfg: ArenaConfig) -> PlayFn:
+    r"""Imports `cfg.play_fn` ("module:function"); lazily, so tests and `summarize` don't need it."""
+    import importlib
+
+    module, _, name = cfg.play_fn.partition(":")
+    return getattr(importlib.import_module(module), name)
 
 
 # matched by class name: importing src.server.tasks.avalon pulls in the whole agent stack
@@ -194,7 +196,7 @@ async def run(cfg: ArenaConfig, run_dir: str, shard: Tuple[int, int] = (0, 1), f
     if not 0 <= shard_idx < num_shards:
         raise ValueError(f"invalid shard {shard_idx}/{num_shards}")
     run_id = ensure_manifest(cfg, run_dir, force=force)
-    play_fn = play_fn or _default_play_fn()
+    play_fn = play_fn or load_play_fn(cfg)
 
     to_run, done = plan_games(cfg, run_dir, shard)
     log_fn(f"run {run_id} shard {shard_idx}/{num_shards}: {len(done)} done, {len(to_run)} to run")

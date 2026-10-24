@@ -72,17 +72,19 @@ class LLMAgent(Agent):
         role: Role,
         num_players: int = 5,
         condition: str = "belief_graph",  # "chat_only", "belief_graph", or "rule_graph"
-        model: str = "gpt-4o-mini",
+        model: Optional[str] = None,
         api_key: Optional[str] = None,
-        base_url: str = "https://api.openai.com/v1",
+        base_url: Optional[str] = None,
         temperature: float = 0.7,
         seed: Optional[int] = None,
         merlin_graph: bool = False,
     ):
         super().__init__(player_id, role, num_players, condition, seed, merlin_graph=merlin_graph)
-        self.model = model
+        # Unset arguments come from the standard OpenAI variables, so a local .env can route every
+        # agent to an OpenAI-compatible endpoint (e.g. Boson Marketplace) without code changes.
+        self.model = model or os.getenv("OPENAI_MODEL") or "gpt-4o-mini"
         self.api_key = api_key or os.getenv("OPENAI_API_KEY") or os.getenv("BOSON_API_KEY", "")
-        self.base_url = base_url.rstrip("/")
+        self.base_url = (base_url or os.getenv("OPENAI_BASE_URL") or "https://api.openai.com/v1").rstrip("/")
         self.temperature = temperature
 
     @property
@@ -254,8 +256,11 @@ class LLMAgent(Agent):
 
         if not llm_sets_p_evil:
             return
-        errors = m.apply_llm_beliefs(args.get("p_evil"))
+        # Beyond the coherence rules, reject P(evil) that ignores the failed quests (all 0.5, or a
+        # failed team not ranked as the top suspects). Re-ask once, then use the pair-counting rule.
+        errors = m.apply_llm_beliefs(args.get("p_evil"), check_evidence=True)
         if not errors:
+            m.record_belief_path("llm")
             return
         retry = (
             prompt + "\n\nYour p_evil was rejected: " + "; ".join(errors)
@@ -265,8 +270,11 @@ class LLMAgent(Agent):
             retry_args = await self._call_llm_tool(retry, "record_observations")
         except Exception:
             retry_args = {}
-        if m.apply_llm_beliefs(retry_args.get("p_evil")):
+        if m.apply_llm_beliefs(retry_args.get("p_evil"), check_evidence=True):
             m.fall_back_to_rule()
+            m.record_belief_path("rule_fallback")
+        else:
+            m.record_belief_path("llm_retry")
 
     async def final_beliefs(self) -> Optional[Dict[int, float]]:
         m = self.memory
