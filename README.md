@@ -57,19 +57,87 @@ The evil team always plays the chat-only baseline, and only the good team's cond
 
 ## Getting started
 
-> Work in progress. Setup instructions will land here once the engine and runner exist.
-
 ```bash
 git clone https://github.com/KhuzemahHQ/AvalonBot.git
 cd AvalonBot
 python -m venv .venv
 # Windows: .venv\Scripts\activate   |   macOS/Linux: source .venv/bin/activate
-cp .env.example .env   # add BOSON_API_KEY and your LLM provider key
+pip install -r requirements.txt
+cp .env.example .env   # fill in your keys, then: chmod 600 .env
+python -m pytest tests -q
 ```
+
+`.env` holds `BOSON_API_KEY` for voice, plus `OPENAI_BASE_URL`, `OPENAI_API_KEY` and `OPENAI_MODEL`
+for the LLM players. Any OpenAI-compatible endpoint works, such as a Boson Marketplace key for
+`gpt-6.1-sol`. Never commit `.env`; git ignores it.
+
+## Batch runs (ablation)
+
+`arena/` is a batch runner, vendored from the Avalon-LLM work
+(see [Acknowledgements](#acknowledgements)). For each game it handles:
+- **Seeded deals:** roles and the first leader come from `(base_seed, game index)`. Every condition
+  uses the same seeds, so game *i* is played on the same deal in each condition: one pair per index.
+- **Logs:** one JSONL event log per game, holding every speech, proposal, vote, quest result and LLM
+  call.
+- **Parallel games, retry and resume:** an interrupted run continues where it stopped.
+
+Each game is played by AvalonBot's own engine and agents (`avalon/arena_play.py`).
+
+```bash
+python -m arena check --config configs/arena/sol_chat_only.yaml      # one tiny call to the endpoint
+python -m arena run   --config configs/arena/sol_chat_only.yaml --run-dir runs/sol/chat_only
+python -m arena run   --config configs/arena/sol_belief_graph.yaml --run-dir runs/sol/belief_graph
+python -m arena run   --config configs/arena/sol_rule_graph.yaml --run-dir runs/sol/rule_graph
+python -m arena summarize --run-dir runs/sol/chat_only
+python -m arena run --fake --config configs/arena/sol_chat_only.yaml --run-dir runs/fake  # offline heuristic bots
+```
+
+Design choices for the ablation:
+- **Discussion:** once per quest, before its first proposal, in every condition. Later proposals
+  for the same quest go straight to the vote, which roughly halves the calls per game.
+- **Condition B's beliefs** are checked against the evidence:
+  - **Rejected:** all-0.5 output once a failed quest singles players out, and output that doesn't rank
+    a failed quest's members as the top suspects.
+  - **Then:** the model is re-asked once. If it's still rejected, the beliefs fall back to the
+    pair-counting rule (condition C's rule).
+  - **Logged:** which path fired (`llm`, `llm_retry` or `rule_fallback`), in each game's `beliefs` event
+    and `game_end`.
+- **Belief graphs from any game:** every game's events are fed through
+  `avalon/arena_adapter.ArenaGraphAdapter`, which uses the same memory and graph module as the demo.
+  So each log also yields every player's belief graph (`belief_graphs` at game end), and
+  `python -m avalon.replay <game.jsonl>` rebuilds it offline.
+- **Metered keys:** a failed game isn't replayed automatically (`max_game_retries: 0`); re-running
+  the same command resumes it. A rejected or expired key, or an exhausted allowance, stops the run
+  instead of letting it play on fallbacks.
+
+THROUGHPUT_SECTION
 
 ## Acknowledgements
 
 The rules engine and baseline agents are adapted from
-[Avalon-LLM / AvalonBench](https://github.com/jonathanmli/Avalon-LLM)
-(Light et al., *AvalonBench: Evaluating LLMs Playing the Game of Avalon*, and
-*Strategist: Learning Strategic Skills by LLMs via Bi-Level Tree Search*, ICLR 2025).
+[Avalon-LLM / AvalonBench](https://github.com/jonathanmli/Avalon-LLM), and the batch runner in `arena/`
+was first built on top of it:
+
+> Jonathan Light, Min Cai, Sheng Shen, Ziniu Hu. *AvalonBench: Evaluating LLMs Playing the Game of
+> Avalon.* NeurIPS 2023 Foundation Models for Decision Making Workshop.
+> https://openreview.net/forum?id=ltUrSryS0K
+>
+> Jonathan Light et al. *Strategist: Learning Strategic Skills by LLMs via Bi-Level Tree Search.* ICLR 2025.
+
+```bibtex
+@inproceedings{light2023avalonbench,
+  title={AvalonBench: Evaluating {LLM}s Playing the Game of Avalon},
+  author={Jonathan Light and Min Cai and Sheng Shen and Ziniu Hu},
+  booktitle={NeurIPS 2023 Foundation Models for Decision Making Workshop},
+  year={2023},
+  url={https://openreview.net/forum?id=ltUrSryS0K}
+}
+```
+
+**License note.** As of 2026-10-24, Avalon-LLM publishes no license: its README has an empty
+"License" section and the repository has no LICENSE file. Avalon-LLM itself builds on
+[AgentBench](https://github.com/THUDM/AgentBench), which is Apache-2.0. For that reason, the only
+code vendored here is `arena/`, the batch runner written for this project, which contains no
+Avalon-LLM game code. AvalonBot's own engine is adapted from Avalon-LLM, though, so it's worth
+asking the AvalonBench authors for an explicit license before publishing beyond the hackathon.
+AvalonBot itself doesn't have a license yet either.

@@ -1,141 +1,47 @@
-# Avalon arena
+# arena: batch runner
 
-Standalone runner for 5-player Avalon games between LLM agents:
-- **Seeded setups:** role deal, seat assignment and starting leader all come from `(base_seed, game_idx)`.
-- **Event logs:** one JSONL log per game.
-- **Concurrent runs:** retries and per-game resume.
+Runs many seeded 5-player Avalon games and records each as a JSONL event log. The game itself is
+pluggable: `play_fn` in the config names a function `play(setup, cfg, log) -> game_end payload`. In
+AvalonBot that's `avalon.arena_play:play_game` (the default), which plays AvalonBot's engine and
+agents.
 
-Each seat picks a provider:
-- **`claude_cli`** (default): Claude Code in headless mode (`claude -p`) on each person's own Claude
-  login. No API key needed.
-- **`anthropic`**: the Claude API with an API key, for anyone who has one (see below).
-- **`openai`**: any OpenAI-compatible Responses API with an API key, such as a Boson Marketplace key
-  for `gpt-6.1-sol` (see below).
-- **`fake`**: a built-in scripted model that plays offline for free, which lets you check an install end to end.
+Vendored from the arena built on [Avalon-LLM](https://github.com/jonathanmli/Avalon-LLM) (only
+`src/arena`, with its own history). The Avalon-LLM game loop, its session wrapper, and the Strategist
+search agent were dropped here.
 
-Providers can be mixed in one game.
+What it does:
+- **Seeded setups:** role deal, seat assignment and first leader all come from
+  `(base_seed, game_idx)`. Configs that differ only in `condition` get the same deals.
+- **Event logs:** one append-only JSONL log per game, fsync'd per event.
+- **Concurrent games:** a semaphore caps parallel games (`concurrency`).
+- **Retries:** transient failures can be retried (`max_game_retries`).
+- **Per-game resume:** finished games are skipped, unfinished ones replayed.
+- **Pause on limits:** a usage limit or exhausted allowance pauses the run (`paused.json`, exit code
+  75) and a re-run resumes it. A rejected key stops it.
+- **Sharding:** `--shard i/n` splits the games across processes or machines; `summarize` merges them.
 
-## Setup (macOS, Linux, Windows)
-
-1. Install Claude Code, then run `claude` once and log in with your Claude account.
-2. Python 3.10–3.12:
-   ```bash
-   python -m venv .venv
-   source .venv/bin/activate          # Windows: .venv\Scripts\activate
-   pip install -r requirements-arena.txt
-   ```
-3. Check everything, then play offline games (free, a few seconds each):
-   ```bash
-   python -m src.arena check
-   python -m src.arena run --fake --num-games 2 --config configs/arena/avalon5.yaml --run-dir results/arena/fake
-   ```
-4. Check your login and each configured model (one tiny call per model), then play for real:
-   ```bash
-   python -m src.arena check --config configs/arena/avalon5.yaml
-   python -m src.arena run --config configs/arena/avalon5.yaml --run-dir results/arena/run1
-   python -m src.arena summarize --run-dir results/arena/run1
-   ```
-
-Run everything from the repository root.
-
-## Configuration
-
-See `configs/arena/avalon5.yaml`. Each seat has these fields:
-- `agent`: `llm`, `search` or `recon`.
-- `provider`: `claude_cli`, `anthropic`, `openai` or `fake`.
-- `model`: a Claude Code model alias or id. `haiku` stretches your usage furthest; `sonnet` and `opus` play better.
-- Search/recon seats only:
-  - `planner_model`: the model for the search agent's dialogue planner.
-  - `planner_num_rollout` / `planner_node_budget`: its tree-search budget per decision. The default 100 is about 4 s of CPU per decision.
-
-With `shuffle_seats`, participants are permuted across seats each game.
-
-## Using a Claude API key (optional)
-
-1. `pip install 'anthropic>=2.0.0'`
-2. Set `ANTHROPIC_API_KEY`. An `ANTHROPIC_AUTH_TOKEN` or an `ant auth login` profile also works.
-3. Give seats `provider: anthropic`:
-   - `model`: an API model id (default `claude-opus-5-5`), or the aliases haiku / sonnet / opus.
-   - `effort`: default `medium`.
-4. Run `python -m src.arena check --config ...` to confirm the key and models.
-
-Requests follow the current API:
-- **No sampling parameters:** `temperature` and friends are rejected since API version 2026-10-21.
-- **Explicit effort level.**
-- **Automatic prompt caching:** each seat's transcript only grows, so later turns reuse earlier ones.
-- **Refusals:** `fallbacks: "default"` reruns a declined request on another model, on models that support
-  it (not Haiku). If the request is still declined, the game ends with status `refusal`.
-
-Error handling:
-- An exhausted credit balance (402) pauses the run like a usage limit.
-- A rejected key stops it with a hint.
-- Rate limits and overload are retried with backoff.
-
-`cost_usd` for API seats is an estimate from a built-in price table (`API_PRICES` in `backends.py`);
-check current pricing before relying on it.
-
-## Using an OpenAI-compatible API key (optional)
-
-1. `pip install 'openai>=1.66,<2'`. Stay on 1.x: openai 3.37 fails to import alongside anthropic 2.x.
-2. Create a `.env` file in the repository root, readable only by you (`chmod 600 .env`). The CLI
-   loads it automatically, and git ignores it. For a Boson Marketplace key, use the base URL and model
-   from your handoff:
-   ```sh
-   OPENAI_BASE_URL=https://<endpoint>/v1
-   OPENAI_API_KEY=<your key>
-   OPENAI_MODEL=gpt-6.1-sol
-   ```
-   Variables already set in your shell take precedence over `.env`. Without `OPENAI_BASE_URL`,
-   requests go to api.openai.com.
-3. Use `configs/arena/gpt_sol.yaml` (every seat on `gpt-6.1-sol`), or give seats `provider: openai`.
-   `effort` maps to `reasoning.effort`; `null` sends none.
-4. Run `python -m src.arena check --config configs/arena/gpt_sol.yaml` to confirm the key works.
-
-Requests use the Responses API with `store=False` and no sampling parameters. The key is never
-logged, and key-shaped text in server error messages is redacted.
-
-Metered keys bill a request once it's accepted, even if the reply is lost. So for this provider, only
-rate-limit rejections are retried. Timeouts and server errors fail the call instead of being retried,
-and `gpt_sol.yaml` sets `max_game_retries: 0` so a failed game isn't replayed. An expired key or an
-exhausted allowance pauses the run, like a usage limit. Token counts are logged; `cost_usd` is 0
-because the endpoint's prices aren't known here, so check usage on your key's usage page.
-
-## Usage limits, resume and scaling
-
-- One game is about 150–250 model calls. A subscription's usage window allows only a limited number
-  of games, especially on larger models.
-- When the usage limit is hit, the run stops cleanly, writes `paused.json`, and exits with code 75.
-  **Re-run the same command after the limit resets** to continue.
-  - Finished games are skipped.
-  - Unfinished games are replayed from scratch with the same seed.
-  - The same applies after Ctrl-C or a crash.
-- `concurrency` runs games in parallel within one process. Search agents' tree search is CPU-bound and
-  takes turns process-wide, so for real parallelism split the run into processes with
-  `--shard i/n` (same `--run-dir` or merged later). `summarize` merges all shards.
-- `cli_max_parallel` caps concurrent `claude` processes.
-
-Each `claude -p` call runs with tools, MCP servers and settings disabled, in an empty temp directory,
-so no project files, hooks or plugins are involved.
-
-Headless Claude Code on your own machine and login is a documented feature, but check Anthropic's
-current consumer terms before relying on sustained automated runs.
-
-## Output
-
-`run-dir/manifest.json` holds the config, its hash and the git SHA. `run-dir/games/game_NNNNN.jsonl` holds
-one event per line:
-- `game_start` (seed, seats, roles)
-- `discussion`, `team_proposed`, `team_votes`, `team_result`, `quest_votes`, `quest_result`, `assassination`
-- `beliefs`
-- `llm_call` (prompt, response, model, tokens, latency)
-- `retry`, `error`
-- `game_end`
-
-`cost_usd` in logs: for `claude_cli`, Claude Code's list-price estimate (not billed on a subscription);
-for `anthropic`, an estimate of what the API call cost.
-
-## Tests
+Run from the repository root:
 
 ```bash
-pytest tests/arena -q
+python -m arena check     --config configs/arena/sol_chat_only.yaml
+python -m arena run       --config configs/arena/sol_chat_only.yaml --run-dir runs/sol/chat_only [--shard 0/2]
+python -m arena summarize --run-dir runs/sol/chat_only
 ```
+
+The CLI loads a local `.env` (gitignored) before running.
+
+Model backends (`backends.py`) are text-only completions with logging, retry rules and error
+classification:
+- **`claude_cli`:** Claude Code headless, on the user's own login.
+- **`anthropic`:** the Claude API.
+- **`openai`:** any OpenAI-compatible Responses API.
+- **`fake`:** an offline model.
+
+AvalonBot's LLMAgent needs tool calls, so it talks to the endpoint itself, and the backends serve
+`check` and text-only play functions. In AvalonBot games, `provider: openai` seats are LLMAgents and
+`provider: fake` seats are the offline HeuristicAgent.
+
+Per-game log events: `game_start` (seed, seats, roles, condition), `discussion`, `team_proposed`,
+`team_votes`, `team_result`, `quest_votes` (cards), `quest_result`, `evil_chat`, `assassination`,
+`llm_call` / `llm_error` (prompt, response, tokens, latency), `beliefs` (final P(good) rows, belief
+paths), `belief_graphs` (each player's graph rebuilt from these events), `error`, `game_end`.
