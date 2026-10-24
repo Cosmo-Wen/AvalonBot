@@ -24,6 +24,7 @@ import io
 import json
 import os
 import sys
+import uuid
 import wave
 from typing import Any, Dict, List, Optional
 
@@ -123,7 +124,7 @@ async def avatar_token():
     if not avatar_manager.is_available:
         return JSONResponse({"error": "LiveKit not configured"}, status_code=503)
     return JSONResponse({
-        "token": avatar_manager.get_browser_token(),
+        "token": avatar_manager.get_browser_token(f"spectator-{uuid.uuid4().hex[:8]}"),
         "url": os.getenv("LIVEKIT_URL", ""),
         "room": avatar_manager.room_name,
         "identities": avatar_manager.identities(),
