@@ -312,6 +312,122 @@ class AnthropicBackend:
         pass
 
 
+# ---------------------------------------------------------------- openai (any OpenAI-compatible endpoint)
+
+def load_openai_credentials(cfg: ArenaConfig) -> Tuple[str, Optional[str]]:
+    r"""(api_key, base_url) from the standard OpenAI variables; the key is never printed.
+
+    OPENAI_API_KEY is required. The base URL is `cfg.openai_base_url`, else OPENAI_BASE_URL, else
+    the SDK default (api.openai.com). The CLI loads both from a local `.env` (see README).
+    """
+    key = os.environ.get("OPENAI_API_KEY")
+    if not key:
+        raise NotLoggedIn("no OpenAI API key: set OPENAI_API_KEY (for example in a local .env file)")
+    return key, cfg.openai_base_url or os.environ.get("OPENAI_BASE_URL")
+
+
+_openai_clients = weakref.WeakKeyDictionary()
+
+
+def _openai_client(cfg: ArenaConfig):
+    try:
+        import openai
+    except ImportError:
+        raise FatalBackendError("provider `openai` needs the SDK: pip install 'openai>=1.66,<2'")
+    key, base_url = load_openai_credentials(cfg)
+    per_loop = _openai_clients.setdefault(asyncio.get_running_loop(), {})
+    cache_key = (base_url, cfg.llm_timeout_s, hash(key))
+    if cache_key not in per_loop:
+        # max_retries=0: ArenaSession decides what is safe to retry (see classify_openai_error)
+        per_loop[cache_key] = openai.AsyncOpenAI(api_key=key, base_url=base_url, max_retries=0,
+                                                 timeout=cfg.llm_timeout_s)
+    return per_loop[cache_key]
+
+
+QUOTA_PATTERNS = re.compile(r"insufficient_quota|quota|allowance|expired|usage limit", re.I)
+KEY_PATTERN = re.compile(r"sk-[A-Za-z0-9_\-]{6,}")
+
+
+def redact_keys(text: str) -> str:
+    r"""Mask anything shaped like an API key; error text from a server ends up in the event logs."""
+    return KEY_PATTERN.sub("sk-[redacted]", text)
+
+
+def classify_openai_error(exc) -> BackendError:
+    r"""Only errors where the request was surely not accepted are retryable.
+
+    Metered resellers (e.g. Boson Marketplace) bill accepted requests even if the response is lost,
+    so timeouts and 5xx are not retried: a retry could be billed twice.
+    """
+    import openai
+
+    body = getattr(exc, "body", None)
+    code = body.get("code") if isinstance(body, dict) else None
+    message = redact_keys(f"{type(exc).__name__}: {getattr(exc, 'message', exc)}")
+    if isinstance(exc, (openai.AuthenticationError, openai.PermissionDeniedError)):
+        if QUOTA_PATTERNS.search(message):
+            return UsageLimitReached(f"API key expired or out of allowance ({message})")
+        return NotLoggedIn(f"API key rejected ({message}). Check the key and its usage page.")
+    if isinstance(exc, openai.NotFoundError):
+        return FatalBackendError(f"model or endpoint unavailable: {message}")
+    if isinstance(exc, openai.RateLimitError):
+        if code == "insufficient_quota" or QUOTA_PATTERNS.search(message):
+            return UsageLimitReached(f"API allowance exhausted ({message})")
+        return TransientBackendError(message)  # rejected before it ran: safe to retry
+    if isinstance(exc, openai.APIStatusError) and exc.status_code == 402:
+        return UsageLimitReached(f"API allowance exhausted ({message})")
+    return BackendError(message)  # timeouts, connection drops, 5xx, bad requests: not retried
+
+
+class OpenAIBackend:
+    r"""Calls an OpenAI-compatible Responses API (`POST /responses`, `store=False`).
+
+    No sampling parameters are sent. `effort` maps to `reasoning.effort`; set it to null for models
+    without reasoning settings.
+    """
+
+    def __init__(self, model: str, cfg: ArenaConfig, effort: Optional[str]):
+        self.model = model
+        self.effort = effort
+        self.cfg = cfg
+
+    def request(self, system: str, transcript: Transcript) -> dict:
+        params = dict(
+            model=self.model,
+            input=[{"role": "assistant" if role == "agent" else "user", "content": text}
+                   for role, text in transcript],
+            store=False,
+            max_output_tokens=self.cfg.api_max_tokens,
+        )
+        if system:
+            params["instructions"] = system
+        if self.effort:
+            params["reasoning"] = {"effort": self.effort}
+        return params
+
+    async def complete(self, system: str, transcript: Transcript) -> Completion:
+        import openai
+
+        start = time.monotonic()
+        client = _openai_client(self.cfg)
+        try:
+            response = await client.responses.create(**self.request(system, transcript))
+        except openai.APIError as e:
+            raise classify_openai_error(e) from None  # don't chain: the SDK exception may echo request details
+        usage = response.usage
+        return Completion(
+            text=response.output_text or "",
+            input_tokens=getattr(usage, "input_tokens", 0) or 0,
+            output_tokens=getattr(usage, "output_tokens", 0) or 0,
+            cost_usd=0.0,  # the endpoint's pricing isn't known here; see its usage page
+            model=response.model or self.model,
+            duration_s=round(time.monotonic() - start, 3),
+        )
+
+    def close(self):
+        pass
+
+
 # ---------------------------------------------------------------- fake
 
 class FakeBackend:
@@ -353,6 +469,8 @@ def make_backend(spec: SeatSpec, cfg: ArenaConfig, seed: int, model: Optional[st
         return FakeBackend(seed)
     if spec.provider == "anthropic":
         return AnthropicBackend(model or spec.model, cfg, spec.effort)
+    if spec.provider == "openai":
+        return OpenAIBackend(model or spec.model, cfg, spec.effort)
     return ClaudeCLIBackend(model or spec.model, cfg, spec.effort)
 
 

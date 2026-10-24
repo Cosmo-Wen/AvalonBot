@@ -9,6 +9,8 @@ Each seat picks a provider:
 - **`claude_cli`** (default): Claude Code in headless mode (`claude -p`) on each person's own Claude
   login. No API key needed.
 - **`anthropic`**: the Claude API with an API key, for anyone who has one (see below).
+- **`openai`**: any OpenAI-compatible Responses API with an API key, such as a Boson Marketplace key
+  for `gpt-6.1-sol` (see below).
 - **`fake`**: a built-in scripted model that plays offline for free, which lets you check an install end to end.
 
 Providers can be mixed in one game.
@@ -40,7 +42,7 @@ Run everything from the repository root.
 
 See `configs/arena/avalon5.yaml`. Each seat has these fields:
 - `agent`: `llm`, `search` or `recon`.
-- `provider`: `claude_cli`, `anthropic` or `fake`.
+- `provider`: `claude_cli`, `anthropic`, `openai` or `fake`.
 - `model`: a Claude Code model alias or id. `haiku` stretches your usage furthest; `sonnet` and `opus` play better.
 - Search/recon seats only:
   - `planner_model`: the model for the search agent's dialogue planner.
@@ -71,6 +73,32 @@ Error handling:
 
 `cost_usd` for API seats is an estimate from a built-in price table (`API_PRICES` in `backends.py`);
 check current pricing before relying on it.
+
+## Using an OpenAI-compatible API key (optional)
+
+1. `pip install 'openai>=1.66,<2'`. Stay on 1.x: openai 3.37 fails to import alongside anthropic 2.x.
+2. Create a `.env` file in the repository root, readable only by you (`chmod 600 .env`). The CLI
+   loads it automatically, and git ignores it. For a Boson Marketplace key, use the base URL and model
+   from your handoff:
+   ```sh
+   OPENAI_BASE_URL=https://<endpoint>/v1
+   OPENAI_API_KEY=<your key>
+   OPENAI_MODEL=gpt-6.1-sol
+   ```
+   Variables already set in your shell take precedence over `.env`. Without `OPENAI_BASE_URL`,
+   requests go to api.openai.com.
+3. Use `configs/arena/gpt_sol.yaml` (every seat on `gpt-6.1-sol`), or give seats `provider: openai`.
+   `effort` maps to `reasoning.effort`; `null` sends none.
+4. Run `python -m src.arena check --config configs/arena/gpt_sol.yaml` to confirm the key works.
+
+Requests use the Responses API with `store=False` and no sampling parameters. The key is never
+logged, and key-shaped text in server error messages is redacted.
+
+Metered keys bill a request once it's accepted, even if the reply is lost. So for this provider, only
+rate-limit rejections are retried. Timeouts and server errors fail the call instead of being retried,
+and `gpt_sol.yaml` sets `max_game_retries: 0` so a failed game isn't replayed. An expired key or an
+exhausted allowance pauses the run, like a usage limit. Token counts are logged; `cost_usd` is 0
+because the endpoint's prices aren't known here, so check usage on your key's usage page.
 
 ## Usage limits, resume and scaling
 

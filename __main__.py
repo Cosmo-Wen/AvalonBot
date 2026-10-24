@@ -7,7 +7,7 @@ import sys
 from collections import Counter, defaultdict
 
 from .backends import FatalBackendError, UsageLimitReached, make_backend, resolve_claude_bin
-from .config import load_config
+from .config import load_config, load_env_file
 from .events import read_events
 from .runner import run
 
@@ -128,6 +128,7 @@ def main(argv=None):
     p_chk.add_argument("--config")
 
     args = parser.parse_args(argv)
+    load_env_file(".env")  # local secrets, e.g. OPENAI_API_KEY / OPENAI_BASE_URL (gitignored)
     if args.cmd == "summarize":
         print(json.dumps(summarize(args.run_dir), indent=2))
         return 0
