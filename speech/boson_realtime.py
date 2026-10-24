@@ -12,7 +12,7 @@ import os
 import json
 import asyncio
 import aiohttp
-from typing import Dict, Optional, Callable, Any
+from typing import Dict, List, Optional, Callable, Any
 
 
 class HiggsRealtimeManager:
@@ -53,6 +53,8 @@ class HiggsRealtimeManager:
         voice: str = "default",
         enable_vad: bool = True,
         stt_model: str = "higgs-stt-3.1",
+        tools: Optional[List[Dict[str, Any]]] = None,
+        tool_choice: str = "auto",
     ) -> Dict[str, Any]:
         """
         Builds the standard session.update event for Higgs Realtime.
@@ -71,12 +73,18 @@ class HiggsRealtimeManager:
         if enable_vad:
             audio_config["input"]["turn_detection"] = {"type": "server_vad"}
 
+        session_payload: Dict[str, Any] = {
+            "model": "higgs-realtime",
+            "instructions": instructions,
+            "output_modalities": ["audio"],
+            "audio": audio_config,
+        }
+
+        if tools is not None:
+            session_payload["tools"] = tools
+            session_payload["tool_choice"] = tool_choice
+
         return {
             "type": "session.update",
-            "session": {
-                "model": "higgs-realtime",
-                "instructions": instructions,
-                "output_modalities": ["audio"],
-                "audio": audio_config,
-            },
+            "session": session_payload,
         }

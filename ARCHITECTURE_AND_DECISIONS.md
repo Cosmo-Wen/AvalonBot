@@ -101,12 +101,17 @@ In raw LLM play (Condition A), models hallucinate past votes or lose track of wh
 
 Integrating Boson AI's **Higgs TTS 3** and **Higgs Realtime** yielded several critical technical discoveries regarding acoustic conditioning, token parsing, and voice registry constraints:
 
-### Discovery 1: Built-in Voices vs. Custom Voices
-- **Constraint:** Calling `POST /v1/audio/speech` with fictitious names like `"male_1"`, `"female_1"`, or OpenAI voice names (`"alloy"`, `"echo"`) triggers:
-  ```json
-  HTTP 400: Unknown voice 'male_1'. Upload a voice first via POST /v1/audio/voices, or use ref_audio + ref_text
-  ```
-- **Architectural Decision:** Without pre-registered cloned voices, all seats must point to `"default"` (`os.getenv("BOSON_VOICE_X", "default")`). Differentiating identical base voices into distinct characters must therefore be accomplished through **inline delivery tags**, **tempo shifts**, and **stylistic modifiers**.
+### Discovery 1: Built-in Preset Voices vs. Custom Voices
+- **Initial Misconception:** Attempting to call OpenAI voice names (`"alloy"`, `"echo"`) or generic names (`"male_1"`) triggered `HTTP 400: Unknown voice`.
+- **Verified Preset Voice Registry:** Boson Higgs TTS 3 includes 6 verified preset voices natively available without prior cloning:
+  - `marcus`: Authoritative, professorial, assertive male (assigned to Player 0 Minion)
+  - `eleanor`: Articulate, poised, explanatory female (assigned to Player 1 Loyal Servant)
+  - `jake`: High-energy, passionate, dramatic male (assigned to Player 2 Loyal Servant)
+  - `oliver`: Calm, reflective, strategic male (assigned to Player 3 Assassin)
+  - `chloe`: Engaging, friendly, clear female (assigned to Player 4 Merlin)
+  - `nora`: Narrative, calm female
+  - `default`: Base fallback voice
+- **Custom Voices:** Reusable voice IDs (`voice_<id>`) created via `POST /v1/audio/voices` are also fully supported via `os.getenv("BOSON_VOICE_X")`.
 
 ### Discovery 2: The Fallback Waveform Synthesizer
 - **Problem:** If a network blip, missing API key, or invalid voice name crashes synthesis, the entire game engine would crash.
@@ -118,18 +123,18 @@ During initial testing, lines tagged with `<|emotion:suspicious|>` sounded acous
 2. **Invalid Tag Syntax:** Tags like `<|speed:0.92|>` and `<|emotion:confident|>` do **not** exist in Boson's vocabulary. The model silently discarded them and reverted to neutral prosody.
 3. **The Expressiveness Multiplier:** Boson's model requires the dedicated token:
    ```text
-   <|prosody:expressiveness_high|>
+   <|prosody:expressive_high|>
    ```
-   Without this token, the acoustic decoder remains constrained to a conservative, conversational pitch range.
+   (Note: earlier experiments mistakenly tested `expressiveness_high`, which the model silently ignored. Using the verified token `expressive_high` activates the full emotional pitch excursion).
 
 ### Discovery 4: Verified Boson Control Token Grammar
 Through testing against Boson documentation and live API endpoints, we confirmed the supported token categories:
 
 | Category | Valid Syntax & Values | Auditory Effect in Avalon |
 |---|---|---|
-| **Emotion** | `<|emotion:anger|>`, `<|emotion:determination|>`, `<|emotion:enthusiasm|>`, `<|emotion:fear|>`, `<|emotion:amusement|>`, `<|emotion:contemplation|>` | Dramatic shifts in pitch inflection, attack, and vocal tension. |
-| **Style** | `<|style:whispering|>`, `<|style:shouting|>` | Converts Merlin's advice into a genuine hushed whisper; pushes high vocal effort for accused players. |
-| **Prosody** | `<|prosody:expressiveness_high|>`, `<|prosody:speed_fast|>`, `<|prosody:speed_slow|>`, `<|prosody:pause|>` | Unlocks wide pitch excursions, adjusts speech rate, and adds dramatic breath pauses. |
+| **Emotion** | `<|emotion:anger|>`, `<|emotion:determination|>`, `<|emotion:enthusiasm|>`, `<|emotion:fear|>`, `<|emotion:amusement|>`, `<|emotion:contemplation|>`, `<|emotion:elation|>`, `<|emotion:pride|>`, `<|emotion:relief|>` | Dramatic shifts in pitch inflection, attack, and vocal tension. |
+| **Style** | `<|style:whispering|>`, `<|style:shouting|>`, `<|style:singing|>` | Converts Merlin's advice into a genuine hushed whisper; pushes high vocal effort for accused players. |
+| **Prosody** | `<|prosody:expressive_high|>`, `<|prosody:expressive_low|>`, `<|prosody:speed_fast|>`, `<|prosody:speed_slow|>`, `<|prosody:speed_very_fast|>`, `<|prosody:pause|>`, `<|prosody:long_pause|>` | Unlocks wide pitch excursions, adjusts speech rate, and adds dramatic breath pauses. |
 | **SFX** | `<|sfx:laughter|>Haha!`, `<|sfx:sigh|>Uh,` | Non-verbal vocalizations (laughter, sighs) when paired with immediate text onomatopoeia. |
 
 ### Discovery 5: Lexical Prosody Conditioning
@@ -145,11 +150,11 @@ Using Boson's verified inline tags, each seat was assigned an acoustic identity 
 
 | Seat | Role | Vocal Archetype | Active Control Tokens |
 |---|---|---|---|
-| **Player 0** | Minion | Forceful, determined soldier; loud bluffer | `<|emotion:determination|><|prosody:expressiveness_high|>` |
-| **Player 1** | Loyal Servant | Earnest, passionate defender of Arthur | `<|emotion:enthusiasm|><|prosody:expressiveness_high|>` |
-| **Player 2** | Loyal Servant | Fast, skeptical investigator; sharp outrage | `<|emotion:anger|><|prosody:speed_fast|><|prosody:expressiveness_high|>` |
-| **Player 3** | Assassin | Slow, chilling, mocking with laughter | `<|emotion:amusement|><|prosody:speed_slow|><|prosody:expressiveness_high|><|sfx:laughter|>Haha!` |
-| **Player 4** | Merlin | Cryptic, intimate, whispered warnings | `<|style:whispering|><|emotion:contemplation|><|prosody:expressiveness_high|>` |
+| **Player 0** | Minion | Forceful, determined soldier; loud bluffer | `<|emotion:determination|><|prosody:expressive_high|>` |
+| **Player 1** | Loyal Servant | Earnest, passionate defender of Arthur | `<|emotion:enthusiasm|><|prosody:expressive_high|>` |
+| **Player 2** | Loyal Servant | Fast, skeptical investigator; sharp outrage | `<|emotion:anger|><|prosody:speed_fast|><|prosody:expressive_high|>` |
+| **Player 3** | Assassin | Slow, chilling, mocking with laughter | `<|emotion:amusement|><|prosody:speed_slow|><|prosody:expressive_high|><|sfx:laughter|>Haha!` |
+| **Player 4** | Merlin | Cryptic, intimate, whispered warnings | `<|style:whispering|><|emotion:contemplation|><|prosody:expressive_high|>` |
 
 ---
 

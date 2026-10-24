@@ -15,6 +15,8 @@ from .engine import AvalonEngine, Role, Phase, ROLE_NAMES
 from .agents import Agent, HeuristicAgent
 from .belief_graph import brier_score, spy_id_accurate
 from speech.boson_tts import HiggsTTSClient
+from speech.audio_pipeline import AudioPipeline
+from speech.emotion_mapper import GameStateEmotionMapper, GameStateDelivery
 
 
 @dataclass
@@ -46,13 +48,17 @@ class AvalonGameRunner:
         agents: Dict[int, Agent],
         seed: Optional[int] = None,
         tts_client: Optional[HiggsTTSClient] = None,
+        audio_pipeline: Optional[AudioPipeline] = None,
         verbose: bool = True,
         on_event: Optional[Callable[[str, Dict[str, Any], List[int]], None]] = None,
     ):
         self.agents = agents
         self.engine = AvalonEngine(seed=seed)
         self.tts_client = tts_client
+        self.audio_pipeline = audio_pipeline
         self.verbose = verbose
+        self.last_quest_result: Optional[Dict[str, Any]] = None
+        self.quest_results: List[bool] = []
         self.seq = 0
         # Observer for logging (e.g. the arena harness): sees every event with its recipients,
         # plus private ones no player observes (quest cards, the assassination).
@@ -90,148 +96,193 @@ class AvalonGameRunner:
         """
         # 1. Reset engine and initialize roles
         roles = self.engine.reset(preset_roles=preset_roles, preset_leader=preset_leader)
+        self.last_quest_result = None
+        self.quest_results = []
         self.seq = 0
 
-        self.log("\n" + "=" * 50)
-        self.log("Starting New 5-Player Avalon Game")
-        self.log("=" * 50)
+        if self.audio_pipeline:
+            await self.audio_pipeline.start()
 
-        # Distribute private info to agents
-        for p, role in roles.items():
-            self.agents[p].role = role
-            self.agents[p].side = self.engine.player_sides[p]
-            p_info = self.engine.get_private_info(p)
-            self.agents[p].set_private_info(p_info)
-            self.log(f"Player {p}: {ROLE_NAMES[role]} ({'Good' if p_info['side'] else 'Evil'})")
+        try:
+            self.log("\n" + "=" * 50)
+            self.log("Starting New 5-Player Avalon Game")
+            self.log("=" * 50)
 
-        merlin_id = self.engine.get_merlin()
-        assassin_id = self.engine.get_assassin()
-        evil_players = set(self.engine.get_evil_players())
-        assassin_p_merlin: Optional[Dict[int, float]] = None
+            # Distribute private info to agents
+            for p, role in roles.items():
+                self.agents[p].role = role
+                self.agents[p].side = self.engine.player_sides[p]
+                p_info = self.engine.get_private_info(p)
+                self.agents[p].set_private_info(p_info)
+                self.log(f"Player {p}: {ROLE_NAMES[role]} ({'Good' if p_info['side'] else 'Evil'})")
 
-        # 2. Game Loop
-        while not self.engine.game_over:
-            turn = self.engine.turn
-            round_num = self.engine.round_num
-            leader = self.engine.leader
-            req_team_size = self.engine.get_required_team_size()
+            merlin_id = self.engine.get_merlin()
+            assassin_id = self.engine.get_assassin()
+            evil_players = set(self.engine.get_evil_players())
+            assassin_p_merlin: Optional[Dict[int, float]] = None
 
-            self.log(f"\n--- Quest {turn + 1} | Round {round_num + 1} | Leader: Player {leader} ---")
+            # 2. Game Loop
+            while not self.engine.game_over:
+                turn = self.engine.turn
+                round_num = self.engine.round_num
+                leader = self.engine.leader
+                req_team_size = self.engine.get_required_team_size()
 
-            # Phase 0: Discussion & Proposal
-            # One discussion per quest, before its first proposal (every condition): later proposals
-            # for the same quest go straight to the vote. Roughly halves the calls per game.
-            discussion_order = [leader] + [(leader + i) % 5 for i in range(1, 5)] if round_num == 0 else []
-            for p in discussion_order:
-                agent = self.agents[p]
-                utterance = await agent.team_discussion(
-                    turn=turn,
-                    round_num=round_num,
-                    leader=leader,
-                    team_size=req_team_size,
-                )
-                self.log(f"Player {p}: \"{utterance}\"")
-                await self.broadcast_event(
-                    "utterance",
-                    {"turn": turn, "round_num": round_num, "speaker": p, "text": utterance},
-                )
+                self.log(f"\n--- Quest {turn + 1} | Round {round_num + 1} | Leader: Player {leader} ---")
 
-                # Optional voice synthesis
-                if self.tts_client:
-                    await self.tts_client.speak_seat_utterance(
-                        seat=p,
-                        text=utterance,
+                # Phase 0: Discussion & Proposal
+                # One discussion per quest, before its first proposal (every condition): later proposals
+                # for the same quest go straight to the vote. Roughly halves the calls per game.
+                discussion_order = [leader] + [(leader + i) % 5 for i in range(1, 5)] if round_num == 0 else []
+                for p in discussion_order:
+                    agent = self.agents[p]
+                    utterance = await agent.team_discussion(
                         turn=turn,
                         round_num=round_num,
+                        leader=leader,
+                        team_size=req_team_size,
+                    )
+                    self.log(f"Player {p}: \"{utterance}\"")
+                    await self.broadcast_event(
+                        "utterance",
+                        {"turn": turn, "round_num": round_num, "speaker": p, "text": utterance},
                     )
 
-            # Each player reads the discussion into its own memory before the proposal
-            if discussion_order:
-                await asyncio.gather(*(a.after_discussion(turn, round_num) for a in self.agents.values()))
+                    # Calculate dynamic vocal delivery based on game state
+                    delivery = GameStateEmotionMapper.get_delivery_for_utterance(
+                        seat=p,
+                        role=agent.role,
+                        turn=turn,
+                        round_num=round_num,
+                        last_quest_result=self.last_quest_result,
+                        quest_results=self.quest_results,
+                        is_hammer_round=(round_num >= 4),
+                        recent_rejections=round_num,
+                    )
 
-            # Leader proposes team
-            proposed_team = await self.agents[leader].propose_team(turn=turn, team_size=req_team_size)
-            self.log(f"\n[Action] Leader Player {leader} proposes team: {proposed_team}")
-            self.engine.choose_team(leader, proposed_team)
-            await self.broadcast_event(
-                "team_proposed",
-                {"turn": turn, "round_num": round_num, "leader": leader, "team": proposed_team},
-            )
-
-            # Phase 1: Team Voting
-            votes: Dict[int, bool] = {}
-            for p, agent in self.agents.items():
-                votes[p] = await agent.vote_on_team(
-                    turn=turn,
-                    round_num=round_num,
-                    leader=leader,
-                    team=proposed_team,
-                )
-
-            next_phase, game_over, approved = self.engine.vote_on_team(votes)
-            vote_summary = ", ".join(f"P{p}:{'Y' if v else 'N'}" for p, v in votes.items())
-            self.log(f"[Vote Result] Team {'APPROVED' if approved else 'REJECTED'} ({vote_summary})")
-
-            await self.broadcast_event(
-                "team_vote_result",
-                {
-                    "turn": turn,
-                    "round_num": round_num,
-                    "leader": leader,
-                    "team": proposed_team,
-                    "votes": votes,
-                    "approved": approved,
-                },
-            )
-
-            if not approved:
-                continue  # Loop to next proposal round
-
-            # Phase 2: Quest Voting
-            quest_votes: Dict[int, bool] = {}
-            for p in proposed_team:
-                quest_votes[p] = await self.agents[p].vote_on_quest(turn=turn, team=proposed_team)
-
-            next_phase, game_over, success, num_fails = self.engine.vote_on_quest(quest_votes)
-            self.log(f"[Quest Outcome] Quest {turn + 1} {'SUCCEEDED' if success else 'FAILED'} ({num_fails} fail votes)")
-
-            # Each card is known only to the player who played it
-            for p, card in quest_votes.items():
-                self.agents[p].record_own_quest_card(turn, card)
-            self.record_private("quest_cards", {"turn": turn, "team": proposed_team, "cards": dict(quest_votes)})
-
-            await self.broadcast_event(
-                "quest_result",
-                {"turn": turn, "round_num": round_num, "team": proposed_team, "success": success, "num_fails": num_fails},
-            )
-
-            # Phase 3: Assassination (if triggered)
-            if self.engine.phase == Phase.ASSASSINATION and not self.engine.game_over:
-                self.log(f"\n[Assassination Phase] Good passed 3 quests! Assassin (Player {assassin_id}) must choose Merlin.")
-
-                # Evil-only discussion: delivered to the evil players and nobody else
-                evil_order = sorted(evil_players, key=lambda p: p == assassin_id)
-                for p in evil_order:
-                    line = await self.agents[p].evil_discussion(turn=self.engine.turn)
-                    if line:
-                        self.log(f"[Evil only] Player {p}: \"{line}\"")
-                        await self.deliver_event(
-                            "evil_chat",
-                            {"turn": self.engine.turn, "round_num": 0, "speaker": p, "text": line},
-                            recipients=evil_order,
+                    # Audio synthesis / playback
+                    if self.audio_pipeline:
+                        self.audio_pipeline.enqueue_turn(
+                            seat=p,
+                            text=utterance,
+                            turn=turn,
+                            round_num=round_num,
+                            delivery=delivery,
+                        )
+                    elif self.tts_client:
+                        await self.tts_client.speak_seat_utterance(
+                            seat=p,
+                            text=utterance,
+                            turn=turn,
+                            round_num=round_num,
+                            style=delivery.style,
+                            emotion=delivery.emotion,
+                            prosody=delivery.prosody,
+                            sfx=delivery.sfx,
                         )
 
-                assassin_memory = self.agents[assassin_id].memory
-                if assassin_memory is not None and assassin_memory.merlin is not None:
-                    assassin_p_merlin = dict(assassin_memory.merlin.p_merlin)
-                    shown = ", ".join(f"P{p}: {v:.2f}" for p, v in sorted(assassin_p_merlin.items()))
-                    self.log(f"[Assassin's P(Merlin)] {shown}")
+                # If pipelined, let utterances play out before leader finalizes action
+                if self.audio_pipeline:
+                    await self.audio_pipeline.wait_until_idle()
 
-                target = await self.agents[assassin_id].assassinate()
-                self.log(f"Assassin Player {assassin_id} targets Player {target}!")
-                self.engine.assassinate(assassin=assassin_id, target=target)
-                self.record_private("assassination", {"assassin": assassin_id, "target": target,
-                                                      "hit_merlin": target == merlin_id})
+                # Each player reads the discussion into its own memory before the proposal
+                if discussion_order:
+                    await asyncio.gather(*(a.after_discussion(turn, round_num) for a in self.agents.values()))
+
+                # Leader proposes team
+                proposed_team = await self.agents[leader].propose_team(turn=turn, team_size=req_team_size)
+                self.log(f"\n[Action] Leader Player {leader} proposes team: {proposed_team}")
+                self.engine.choose_team(leader, proposed_team)
+                await self.broadcast_event(
+                    "team_proposed",
+                    {"turn": turn, "round_num": round_num, "leader": leader, "team": proposed_team},
+                )
+
+                # Phase 1: Team Voting
+                votes: Dict[int, bool] = {}
+                for p, agent in self.agents.items():
+                    votes[p] = await agent.vote_on_team(
+                        turn=turn,
+                        round_num=round_num,
+                        leader=leader,
+                        team=proposed_team,
+                    )
+
+                next_phase, game_over, approved = self.engine.vote_on_team(votes)
+                vote_summary = ", ".join(f"P{p}:{'Y' if v else 'N'}" for p, v in votes.items())
+                self.log(f"[Vote Result] Team {'APPROVED' if approved else 'REJECTED'} ({vote_summary})")
+
+                await self.broadcast_event(
+                    "team_vote_result",
+                    {
+                        "turn": turn,
+                        "round_num": round_num,
+                        "leader": leader,
+                        "team": proposed_team,
+                        "votes": votes,
+                        "approved": approved,
+                    },
+                )
+
+                if not approved:
+                    continue  # Loop to next proposal round
+
+                # Phase 2: Quest Voting
+                quest_votes: Dict[int, bool] = {}
+                for p in proposed_team:
+                    quest_votes[p] = await self.agents[p].vote_on_quest(turn=turn, team=proposed_team)
+
+                next_phase, game_over, success, num_fails = self.engine.vote_on_quest(quest_votes)
+                self.log(f"[Quest Outcome] Quest {turn + 1} {'SUCCEEDED' if success else 'FAILED'} ({num_fails} fail votes)")
+
+                # Each card is known only to the player who played it
+                for p, card in quest_votes.items():
+                    self.agents[p].record_own_quest_card(turn, card)
+                self.record_private("quest_cards", {"turn": turn, "team": proposed_team, "cards": dict(quest_votes)})
+
+                self.last_quest_result = {
+                    "turn": turn,
+                    "team": proposed_team,
+                    "success": success,
+                    "num_fails": num_fails,
+                }
+                self.quest_results.append(success)
+
+                await self.broadcast_event(
+                    "quest_result",
+                    {"turn": turn, "round_num": round_num, "team": proposed_team, "success": success, "num_fails": num_fails},
+                )
+
+                # Phase 3: Assassination (if triggered)
+                if self.engine.phase == Phase.ASSASSINATION and not self.engine.game_over:
+                    self.log(f"\n[Assassination Phase] Good passed 3 quests! Assassin (Player {assassin_id}) must choose Merlin.")
+
+                    # Evil-only discussion: delivered to the evil players and nobody else
+                    evil_order = sorted(evil_players, key=lambda p: p == assassin_id)
+                    for p in evil_order:
+                        line = await self.agents[p].evil_discussion(turn=self.engine.turn)
+                        if line:
+                            self.log(f"[Evil only] Player {p}: \"{line}\"")
+                            await self.deliver_event(
+                                "evil_chat",
+                                {"turn": self.engine.turn, "round_num": 0, "speaker": p, "text": line},
+                                recipients=evil_order,
+                            )
+
+                    assassin_memory = getattr(self.agents[assassin_id], "memory", None)
+                    if assassin_memory is not None and getattr(assassin_memory, "merlin", None) is not None:
+                        assassin_p_merlin = dict(assassin_memory.merlin.p_merlin)
+                        shown = ", ".join(f"P{p}: {v:.2f}" for p, v in sorted(assassin_p_merlin.items()))
+                        self.log(f"[Assassin's P(Merlin)] {shown}")
+
+                    target = await self.agents[assassin_id].assassinate()
+                    self.log(f"Assassin Player {assassin_id} targets Player {target}!")
+                    self.engine.assassinate(assassin=assassin_id, target=target)
+                    self.record_private("assassination", {"assassin": assassin_id, "target": target,
+                                                          "hit_merlin": target == merlin_id})
+        finally:
+            if self.audio_pipeline:
+                await self.audio_pipeline.stop()
 
         # 3. Game Over & Metrics
         self.log("\n" + "=" * 50)
@@ -253,9 +304,11 @@ class AvalonGameRunner:
             final_p_evil[p] = p_evil
             good_spy_id_accuracies[p] = spy_id_accurate(p_evil, evil_players)
             good_brier_scores[p] = brier_score(p_evil, evil_players)
-            belief_fallbacks[p] = agent.memory.belief_fallbacks
-            constraint_resets[p] = agent.memory.constraint_resets
-            belief_paths[p] = dict(agent.memory.belief_paths)
+            agent_mem = getattr(agent, "memory", None)
+            if agent_mem is not None:
+                belief_fallbacks[p] = getattr(agent_mem, "belief_fallbacks", 0)
+                constraint_resets[p] = getattr(agent_mem, "constraint_resets", 0)
+                belief_paths[p] = dict(getattr(agent_mem, "belief_paths", {}))
 
         merlin_survived = (
             self.engine.good_victory is True

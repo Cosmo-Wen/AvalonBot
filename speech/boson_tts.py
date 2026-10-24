@@ -15,11 +15,13 @@ import wave
 import struct
 import math
 import asyncio
-from typing import Dict, Optional, Tuple, List
+from typing import Dict, Optional, Tuple, List, Any
 from pathlib import Path
 import aiohttp
 
 from dotenv import load_dotenv
+
+from speech.budget import global_budget_tracker
 
 load_dotenv()
 
@@ -31,43 +33,43 @@ except ImportError:
 
 
 DEFAULT_SEAT_VOICES: Dict[int, str] = {
-    0: os.getenv("BOSON_VOICE_0", "default"),
-    1: os.getenv("BOSON_VOICE_1", "default"),
-    2: os.getenv("BOSON_VOICE_2", "default"),
-    3: os.getenv("BOSON_VOICE_3", "default"),
-    4: os.getenv("BOSON_VOICE_4", "default"),
+    0: os.getenv("BOSON_VOICE_0", "marcus"),   # Minion: deep authoritative male
+    1: os.getenv("BOSON_VOICE_1", "eleanor"),  # Loyal Servant 1: articulate poised female
+    2: os.getenv("BOSON_VOICE_2", "jake"),     # Loyal Servant 2: high-energy reactive male
+    3: os.getenv("BOSON_VOICE_3", "oliver"),   # Assassin: calm strategic male
+    4: os.getenv("BOSON_VOICE_4", "chloe"),    # Merlin: warm guidance female
 }
 
 # Verified Boson Higgs Control Tag Profiles per seat:
-# - Emotion tokens: 'determination', 'enthusiasm', 'anger', 'fear', 'amusement', 'contemplation', 'pride'
-# - Style tokens: 'whispering', 'shouting'
-# - Prosody tokens: 'expressiveness_high', 'speed_fast', 'speed_slow', 'pause'
-# - SFX tokens: 'laughter', 'sigh'
+# - Emotion tokens: 'determination', 'enthusiasm', 'anger', 'fear', 'amusement', 'contemplation', 'pride', 'relief', 'elation'
+# - Style tokens: 'whispering', 'shouting', 'singing'
+# - Prosody tokens: 'expressive_high', 'expressive_low', 'speed_fast', 'speed_slow', 'speed_very_fast', 'pause', 'long_pause', 'pitch_low', 'pitch_high'
+# - SFX tokens: 'laughter', 'sigh', 'cough', 'crying', 'screaming', 'burping', 'humming', 'sniff', 'sneeze'
 SEAT_PROSODY = {
     0: {  # Player 0 (Minion): Forceful, assertive, determined soldier
         "emotion": "determination",
         "style": None,
-        "prosody": ["expressiveness_high"],
+        "prosody": ["expressive_high"],
     },
     1: {  # Player 1 (Loyal Servant 1): Earnest, passionate, enthusiastic defender of Arthur
         "emotion": "enthusiasm",
         "style": None,
-        "prosody": ["expressiveness_high"],
+        "prosody": ["expressive_high"],
     },
     2: {  # Player 2 (Loyal Servant 2): High-energy, rapid, sharp questioning / indignation
         "emotion": "anger",
         "style": None,
-        "prosody": ["speed_fast", "expressiveness_high"],
+        "prosody": ["speed_fast", "expressive_high"],
     },
     3: {  # Player 3 (Assassin): Slow, mocking, self-assured, chilling
         "emotion": "amusement",
         "style": None,
-        "prosody": ["speed_slow", "expressiveness_high"],
+        "prosody": ["speed_slow", "expressive_high"],
     },
     4: {  # Player 4 (Merlin): Whispered, secretive, cryptic guidance to evade assassination
         "emotion": "contemplation",
         "style": "whispering",
-        "prosody": ["expressiveness_high"],
+        "prosody": ["expressive_high"],
     },
 }
 
@@ -136,6 +138,9 @@ class HiggsTTSClient:
         style: Optional[str] = None,
         emotion: Optional[str] = None,
         prosody: Optional[List[str]] = None,
+        sfx: Optional[str] = None,
+        normalize: bool = True,
+        language: Optional[str] = "eng",
         seat: int = 0,
     ) -> Optional[bytes]:
         """
@@ -143,7 +148,7 @@ class HiggsTTSClient:
         Supports Higgs inline control tokens:
         - <|style:...|> (e.g. whispering, shouting)
         - <|emotion:...|> (e.g. determination, anger, enthusiasm, contemplation, amusement)
-        - <|prosody:...|> (e.g. expressiveness_high, speed_fast, speed_slow, pause)
+        - <|prosody:...|> (e.g. expressive_high, expressive_low, speed_fast, speed_slow, pause)
         - <|sfx:...|> (e.g. laughter, sigh)
         """
         formatted_text = text
@@ -157,38 +162,67 @@ class HiggsTTSClient:
                 prefix_tags += f"<|emotion:{emotion}|>"
             if prosody:
                 for p in prosody:
-                    prefix_tags += f"<|prosody:{p}|>"
+                    # Sanitize legacy/misnamed token
+                    token = "expressive_high" if p == "expressiveness_high" else p
+                    prefix_tags += f"<|prosody:{token}|>"
+            if sfx:
+                # In Boson Higgs, SFX tokens work best with an accompanying onomatopoeia cue
+                lower_text = text.lower()
+                if sfx == "sigh" and "sigh" not in lower_text and "uh" not in lower_text:
+                    prefix_tags += f"<|sfx:{sfx}|>Uh, "
+                elif sfx == "laughter" and "haha" not in lower_text:
+                    prefix_tags += f"<|sfx:{sfx}|>Haha! "
+                else:
+                    prefix_tags += f"<|sfx:{sfx}|>"
 
             formatted_text = f"{prefix_tags}{text}"
 
-        # If API key is present, call live Boson API
+        # Clean any legacy expressiveness_high tokens inside text
+        if "expressiveness_high" in formatted_text:
+            formatted_text = formatted_text.replace("expressiveness_high", "expressive_high")
+
+        # Check if API key is present and budget allows
         if self.api_key:
-            headers = {
-                "Authorization": f"Bearer {self.api_key}",
-                "Content-Type": "application/json",
-            }
-            payload = {
-                "model": self.model,
-                "input": formatted_text,
-                "voice": voice,
-                "response_format": "wav",
-            }
+            if not global_budget_tracker.can_call():
+                print(f"[Higgs TTS Notice] Budget cap of {global_budget_tracker.max_calls} calls reached. Falling back to offline tone synthesis.")
+            else:
+                headers = {
+                    "Authorization": f"Bearer {self.api_key}",
+                    "Content-Type": "application/json",
+                }
+                payload: Dict[str, Any] = {
+                    "model": self.model,
+                    "input": formatted_text,
+                    "voice": voice,
+                    "response_format": "wav",
+                    "normalize": normalize,
+                }
+                if language:
+                    payload["language"] = language
 
-            try:
-                async with aiohttp.ClientSession() as session:
-                    async with session.post(self.BASE_URL, json=payload, headers=headers) as resp:
-                        if resp.status == 200:
-                            audio_bytes = await resp.read()
-                            if save_path:
-                                save_path.write_bytes(audio_bytes)
-                            return audio_bytes
-                        else:
-                            err_text = await resp.text()
-                            print(f"[Higgs TTS Error] API returned HTTP {resp.status} for voice '{voice}': {err_text}")
-            except Exception as e:
-                print(f"[Higgs TTS Error] Connection failed: {e}")
+                try:
+                    async with aiohttp.ClientSession() as session:
+                        async with session.post(self.BASE_URL, json=payload, headers=headers) as resp:
+                            if resp.status == 200:
+                                audio_bytes = await resp.read()
+                                if save_path:
+                                    save_path.write_bytes(audio_bytes)
+                                global_budget_tracker.record_call(
+                                    endpoint=self.BASE_URL,
+                                    voice=voice,
+                                    text_length=len(formatted_text),
+                                    status_code=resp.status,
+                                    byte_size=len(audio_bytes),
+                                    extra={"seat": seat, "model": self.model},
+                                )
+                                return audio_bytes
+                            else:
+                                err_text = await resp.text()
+                                print(f"[Higgs TTS Error] API returned HTTP {resp.status} for voice '{voice}': {err_text}")
+                except Exception as e:
+                    print(f"[Higgs TTS Error] Connection failed: {e}")
 
-        # Fallback to local audio tone generation if key missing or failed
+        # Fallback to local audio tone generation if key missing, budget exhausted, or failed
         if save_path:
             freq = SEAT_TONE_FREQS.get(seat, 440)
             self._generate_offline_wav(save_path, freq=freq)
@@ -219,6 +253,7 @@ class HiggsTTSClient:
         style: Optional[str] = None,
         emotion: Optional[str] = None,
         prosody: Optional[List[str]] = None,
+        sfx: Optional[str] = None,
     ) -> Optional[Path]:
         """
         Synthesizes and plays a player's line out loud in their designated seat voice.
@@ -230,12 +265,13 @@ class HiggsTTSClient:
         profile = SEAT_PROSODY.get(seat, {
             "emotion": "determination",
             "style": None,
-            "prosody": ["expressiveness_high"],
+            "prosody": ["expressive_high"],
         })
 
         chosen_style = style or profile.get("style")
         chosen_emotion = emotion or profile.get("emotion")
-        chosen_prosody = prosody or profile.get("prosody", ["expressiveness_high"])
+        chosen_prosody = prosody or profile.get("prosody", ["expressive_high"])
+        chosen_sfx = sfx
 
         if text.startswith("<|"):
             tag_end = text.rfind("|>")
@@ -243,6 +279,8 @@ class HiggsTTSClient:
             print(f"  [Higgs TTS] Synthesizing Player {seat} (Active Tags: {active_tags})...")
         else:
             tag_summary = f"Style: {chosen_style or 'normal'}, Emotion: {chosen_emotion}, Prosody: {chosen_prosody}"
+            if chosen_sfx:
+                tag_summary += f", SFX: {chosen_sfx}"
             print(f"  [Higgs TTS] Synthesizing Player {seat} ({tag_summary})...")
 
         # Synthesize audio
@@ -253,6 +291,7 @@ class HiggsTTSClient:
             style=chosen_style,
             emotion=chosen_emotion,
             prosody=chosen_prosody,
+            sfx=chosen_sfx,
             seat=seat,
         )
 
