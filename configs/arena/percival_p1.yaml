@@ -8,7 +8,7 @@ seats:
 roles: [Merlin, Percival, Servant, Assassin, Morgana]
 condition: rule_graph
 percival_condition: four_world
-num_games: 40
+num_games: 10
 base_seed: 0
 shuffle_roles: true
 shuffle_seats: false

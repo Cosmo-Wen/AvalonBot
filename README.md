@@ -117,7 +117,7 @@ python -m arena run --config configs/arena/percival_p1.yaml --num-games 1 --run-
 python -m arena summarize --run-dir runs/percival/smoke/p1
 ```
 
-Full experiment, when ready (40 paired games per condition):
+Full experiment (10 paired games per condition; 20 games total):
 
 ```bash
 python -m arena run --config configs/arena/percival_p0.yaml --run-dir runs/percival/p0
