@@ -16,7 +16,7 @@ export default function HumanActionModal({ prompt, onRespond }: HumanActionModal
   const [discussionText, setDiscussionText] = useState("");
   const [isRecording, setIsRecording] = useState(false);
   const [micStatus, setMicStatus] = useState<string | null>(null);
-  const [speakVoice, setSpeakVoice] = useState(true);
+  const speakVoice = false;
   const recognitionRef = useRef<any>(null);
   const mediaStreamRef = useRef<MediaStream | null>(null);
 
@@ -475,18 +475,6 @@ export default function HumanActionModal({ prompt, onRespond }: HumanActionModal
               </div>
             </div>
 
-            {/* TTS Voice Toggle */}
-            <div className="flex items-center justify-between w-full px-1 text-xs">
-              <label className="flex items-center gap-2 cursor-pointer font-body text-medieval-silver/80 hover:text-medieval-parchment">
-                <input
-                  type="checkbox"
-                  checked={speakVoice}
-                  onChange={(e) => setSpeakVoice(e.target.checked)}
-                  className="rounded border-medieval-border accent-medieval-gold"
-                />
-                <span>Voice Synthesis: Hear Atlas speak via Higgs TTS (Marcus)</span>
-              </label>
-            </div>
 
             {/* EXPLICIT SUBMIT BUTTON BEFORE PROCEEDING */}
             <div className="w-full pt-1 flex flex-col gap-1.5">
