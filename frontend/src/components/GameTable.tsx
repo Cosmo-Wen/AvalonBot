@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState, type ReactNode } from "react";
+import type { RemoteTrack } from "livekit-client";
 import PlayerAvatar from "./PlayerAvatar";
 import type { Player, TeamProposal } from "../types";
 
@@ -7,7 +8,7 @@ interface GameTableProps {
   leader: number;
   proposal: TeamProposal | null;
   showRoles: boolean;
-  seatVideos: Record<number, MediaStream>;
+  seatVideos: Record<number, RemoteTrack>;
   levels: Record<number, number>;
   children?: ReactNode;
 }
@@ -63,7 +64,7 @@ export default function GameTable({ players, leader, proposal, showRoles, seatVi
               isOnTeam={team.has(player.seat)}
               vote={proposal?.votes?.[player.seat]}
               showRole={showRoles}
-              videoStream={seatVideos[player.seat] ?? null}
+              videoTrack={seatVideos[player.seat] ?? null}
               level={levels[player.seat] ?? 0}
               width={avatarWidth}
             />

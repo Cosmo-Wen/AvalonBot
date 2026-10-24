@@ -1,4 +1,5 @@
 import { useEffect, useRef } from "react";
+import type { RemoteTrack } from "livekit-client";
 import { type Player, ROLE_DISPLAY, SEAT_COLORS, seatName } from "../types";
 
 interface PlayerAvatarProps {
@@ -7,7 +8,7 @@ interface PlayerAvatarProps {
   isOnTeam: boolean;
   vote?: boolean;
   showRole: boolean;
-  videoStream?: MediaStream | null;
+  videoTrack?: RemoteTrack | null;
   level: number;
   width: number;
 }
@@ -19,11 +20,17 @@ const ROLE_ICON: Record<string, string> = {
   loyal_servant: "/roles/good-icon.webp",
 };
 
-function AvatarVideo({ stream }: { stream: MediaStream }) {
+function AvatarVideo({ track }: { track: RemoteTrack }) {
   const ref = useRef<HTMLVideoElement>(null);
   useEffect(() => {
-    if (ref.current && ref.current.srcObject !== stream) ref.current.srcObject = stream;
-  }, [stream]);
+    const el = ref.current;
+    if (!el) return;
+    // attach() is required: LiveKit will not send frames to a track that has no element.
+    track.attach(el);
+    return () => {
+      track.detach(el);
+    };
+  }, [track]);
   return <video ref={ref} autoPlay playsInline muted className="absolute inset-0 h-full w-full object-cover object-top" />;
 }
 
@@ -42,7 +49,7 @@ function Emblem({ seat }: { seat: number }) {
   );
 }
 
-export default function PlayerAvatar({ player, isLeader, isOnTeam, vote, showRole, videoStream, level, width }: PlayerAvatarProps) {
+export default function PlayerAvatar({ player, isLeader, isOnTeam, vote, showRole, videoTrack, level, width }: PlayerAvatarProps) {
   const color = SEAT_COLORS[player.seat];
   const speaking = player.isSpeaking || level > 0.05;
   const height = Math.round(width * 1.25);
@@ -62,7 +69,7 @@ export default function PlayerAvatar({ player, isLeader, isOnTeam, vote, showRol
         }}
       >
         <div className="relative h-full w-full overflow-hidden rounded-[0.8rem] bg-medieval-surface">
-          {videoStream ? <AvatarVideo stream={videoStream} /> : <Emblem seat={player.seat} />}
+          {videoTrack ? <AvatarVideo track={videoTrack} /> : <Emblem seat={player.seat} />}
           <div className="pointer-events-none absolute inset-x-0 bottom-0 h-1/3 bg-gradient-to-t from-black/70 to-transparent" />
           {speaking && (
             <div className="absolute bottom-1.5 left-1/2 flex -translate-x-1/2 items-end gap-[2px]">

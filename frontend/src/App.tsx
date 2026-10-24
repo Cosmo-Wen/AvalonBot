@@ -175,7 +175,9 @@ export default function App() {
             disabled={livekit.status === "unavailable" || livekit.status === "starting" || livekit.status === "checking"}
             title={livekit.message || "Higgs talking-head avatars over LiveKit"}
           >
-            {AVATAR_LABEL[livekit.status]}
+            {livekit.status === "connected"
+              ? `Avatars live · ${Object.keys(livekit.seatVideos).length}/5`
+              : AVATAR_LABEL[livekit.status]}
           </TopButton>
           {livekit.status === "connected" && livekit.message && (
             <TopButton onClick={livekit.start} title="Try again for the seats that failed">

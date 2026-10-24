@@ -6,7 +6,7 @@
  * an avatar fall back to the portrait and the WebSocket audio.
  */
 import { useCallback, useEffect, useRef, useState } from "react";
-import { Room, RoomEvent, Track, type RemoteParticipant, type RemoteTrack } from "livekit-client";
+import { ConnectionState, Room, RoomEvent, Track, type RemoteParticipant, type RemoteTrack, type RemoteTrackPublication } from "livekit-client";
 
 export type AvatarStatus = "checking" | "unavailable" | "idle" | "starting" | "connected" | "error";
 
@@ -18,7 +18,7 @@ const seatOf = (identity: string): number | null => {
 export function useLiveKit() {
   const [status, setStatus] = useState<AvatarStatus>("checking");
   const [message, setMessage] = useState<string>("");
-  const [seatVideos, setSeatVideos] = useState<Record<number, MediaStream>>({});
+  const [seatVideos, setSeatVideos] = useState<Record<number, RemoteTrack>>({});
   const [levels, setLevels] = useState<Record<number, number>>({});
   const roomRef = useRef<Room | null>(null);
   const audioEls = useRef<Map<string, HTMLMediaElement>>(new Map());
@@ -27,25 +27,34 @@ export function useLiveKit() {
   const refresh = useCallback(() => {
     const room = roomRef.current;
     if (!room) return;
-    const videos: Record<number, MediaStream> = {};
+    const videos: Record<number, RemoteTrack> = {};
     room.remoteParticipants.forEach((p: RemoteParticipant) => {
       const seat = seatOf(p.identity);
       if (seat === null) return;
-      p.trackPublications.forEach((pub) => {
-        const track = pub.track;
-        if (track && track.kind === Track.Kind.Video) videos[seat] = new MediaStream([track.mediaStreamTrack]);
+      p.trackPublications.forEach((pub: RemoteTrackPublication) => {
+        if (pub.kind !== Track.Kind.Video) return;
+        // LiveKit pauses a video track that was never attached to an element, so subscribe
+        // explicitly and let the seat attach it.
+        if (!pub.isSubscribed) pub.setSubscribed(true);
+        if (pub.track) videos[seat] = pub.track;
       });
     });
-    setSeatVideos(videos);
+    setSeatVideos((prev) => {
+      const same =
+        Object.keys(prev).length === Object.keys(videos).length &&
+        Object.entries(videos).every(([seat, track]) => prev[Number(seat)] === track);
+      return same ? prev : videos;
+    });
   }, []);
 
   const connect = useCallback(async () => {
-    if (roomRef.current) return;
+    if (roomRef.current && roomRef.current.state !== ConnectionState.Disconnected) return;
+    roomRef.current = null;
     const tokenResp = await fetch("/api/avatar/token");
     if (!tokenResp.ok) throw new Error(`token request failed (${tokenResp.status})`);
     const { token, url } = await tokenResp.json();
 
-    const room = new Room({ adaptiveStream: true, dynacast: true });
+    const room = new Room();
     roomRef.current = room;
     room
       .on(RoomEvent.TrackSubscribed, (track: RemoteTrack) => {
@@ -59,10 +68,13 @@ export function useLiveKit() {
         refresh();
       })
       .on(RoomEvent.TrackUnsubscribed, (track: RemoteTrack) => {
-        track.detach().forEach((el) => el.remove());
-        if (track.sid) audioEls.current.delete(track.sid);
+        if (track.kind === Track.Kind.Audio) {
+          track.detach().forEach((el) => el.remove());
+          if (track.sid) audioEls.current.delete(track.sid);
+        }
         refresh();
       })
+      .on(RoomEvent.TrackPublished, refresh)
       .on(RoomEvent.ParticipantConnected, refresh)
       .on(RoomEvent.ParticipantDisconnected, refresh)
       .on(RoomEvent.ActiveSpeakersChanged, (speakers) => {
@@ -105,6 +117,14 @@ export function useLiveKit() {
       cancelled = true;
     };
   }, [connect]);
+
+  // Avatars can join after we do. Keep looking so a seat never stays on its shield.
+  useEffect(() => {
+    const id = setInterval(() => {
+      if (roomRef.current?.state === ConnectionState.Connected) refresh();
+    }, 2000);
+    return () => clearInterval(id);
+  }, [refresh]);
 
   useEffect(
     () => () => {
