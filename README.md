@@ -110,7 +110,35 @@ Design choices for the ablation:
   the same command resumes it. A rejected or expired key, or an exhausted allowance, stops the run
   instead of letting it play on fallbacks.
 
-THROUGHPUT_SECTION
+### Throughput on Boson (`gpt-6.1-sol`), measured 2026-10-24
+
+Condition A, 8 games in parallel:
+
+| | 10 min, no cap | 5 min, `max_inflight_requests: 6` |
+|---|---|---|
+| Model calls | 315 | 169 |
+| Calls per minute | 30.8 | 33.3 (steady: 35, 35, 34, 33, 30) |
+| Latency mean / median / p90 | 10.1 / 7.3 / 21.0 s | 7.4 / 4.7 / 16.6 s |
+| Failed calls (played as fallbacks) | 58 (16%), all `429 gateway_concurrency_limit` | 0 (16 rejections retried, 19 s of backoff) |
+| Tokens per call (in / out) | 1,073 / 72 | 779 / 59 |
+| Peak requests in flight | 12 | at most 6 |
+
+What this means:
+- **Throughput is capped by the gateway, not by game count.** Boson rejects more than a handful of
+  concurrent requests per key, so more parallel games don't help, and neither do shards on other
+  machines with the same key. `max_inflight_requests: 6` keeps requests under the limit. The rare
+  rejections left over are retried, since a rejected request was never accepted and so isn't billed
+  twice.
+- **Calls per game:** a full condition-A game takes about 40–70 calls (about 15 per quest); the one
+  game that finished took 38 calls over 3 quests. B and C add extraction calls, so I assume about 25%
+  more there.
+- **Batch size:** at ~33 calls/min (~2,000 per hour), 40 pairs per condition across A, B and C is
+  about 8,400 calls, or **roughly 4 hours**. Allowing for the uncertainty in calls per game, 30 pairs
+  takes about 3 hours and 60 pairs about 6.
+- **Configs:** `configs/arena/sol_*.yaml` use `num_games: 40`, the middle of the 30–60 target.
+- **Allowance:** the two test runs used about 470k input and 33k output tokens, roughly 6% of a
+  40-pair batch. Check the key's usage page to extrapolate spend against its $50 allowance before
+  starting. The endpoint's prices aren't published here, so logs record tokens only.
 
 ## Acknowledgements
 

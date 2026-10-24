@@ -13,12 +13,13 @@ seats:
 roles: [Merlin, Servant, Servant, Assassin, Minion]
 condition: rule_graph
 
-num_games: 40         # pairs per condition; see README "Batch runs" for how this was chosen
+num_games: 40         # pairs per condition: ~4 h for A+B+C at the measured ~33 calls/min (README, Batch runs)
 base_seed: 0
 shuffle_roles: true
 shuffle_seats: false  # every seat plays the same model
 random_leader: true
 
 concurrency: 8        # games in parallel
+max_inflight_requests: 6  # Boson's gateway rejects >~6-12 concurrent requests per key (429)
 max_game_retries: 0   # metered key: don't replay a failed game (re-run resumes it instead)
 llm_timeout_s: 180

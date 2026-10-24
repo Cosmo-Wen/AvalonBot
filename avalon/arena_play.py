@@ -12,8 +12,11 @@ OPENAI_BASE_URL, and the seat's `model`); `provider: fake` plays the offline Heu
 team plays `cfg.condition`; the evil team always plays chat-only (A).
 """
 
+import asyncio
 import os
+import random
 import time
+import weakref
 from typing import Any, Dict, List, Optional
 
 from arena.backends import BackendError, FatalBackendError, NotLoggedIn, UsageLimitReached, redact_keys
@@ -31,36 +34,76 @@ from .runner import AvalonGameRunner
 ROLE_TO_ARENA = {role: name for name, role in ARENA_ROLES.items()}
 
 
+# one cap per event loop on concurrent API requests, shared by every game and seat
+_inflight = weakref.WeakKeyDictionary()
+
+
+def _inflight_semaphore(limit: int) -> asyncio.Semaphore:
+    per_loop = _inflight.setdefault(asyncio.get_running_loop(), {})
+    if limit not in per_loop:
+        per_loop[limit] = asyncio.Semaphore(limit)
+    return per_loop[limit]
+
+
+def is_gateway_rejection(message: str) -> bool:
+    r"""A 429 the gateway sent before running the request (concurrency or rate limit, not quota).
+    The request was never accepted, so retrying it can't be billed twice."""
+    lowered = message.lower()
+    return "(429)" in message and ("rate_limit_error" in lowered or "concurrency" in lowered) \
+        and not any(w in lowered for w in ("quota", "allowance"))
+
+
 class LoggedLLMAgent(LLMAgent):
     r"""LLMAgent whose every API call is logged as an `llm_call` (or `llm_error`) event.
 
-    LLMAgent catches API errors and falls back, so an expired key or exhausted allowance would
-    otherwise let the game finish on fallbacks. The first such error is kept in `fatal`; later calls
-    fail immediately (no further spend) and the game is reported as interrupted afterwards.
+    Requests share a process-wide cap (`max_inflight_requests`), and gateway rejections (429
+    concurrency/rate limits) are retried with backoff, since LLMAgent would otherwise catch them and
+    play a fallback move. LLMAgent also falls back on an expired key or exhausted allowance; the
+    first such error is kept in `fatal`, later calls fail immediately (no further spend), and the
+    game is reported as interrupted afterwards.
     """
 
-    def __init__(self, *args, log: EventLog, **kwargs):
+    def __init__(self, *args, log: EventLog, max_inflight: int = 6, max_retries: int = 5,
+                 backoff_base_s: float = 2.0, backoff_max_s: float = 60.0, **kwargs):
         super().__init__(*args, **kwargs)
         self.log = log
+        self.max_inflight = max_inflight
+        self.max_retries = max_retries
+        self.backoff_base_s = backoff_base_s
+        self.backoff_max_s = backoff_max_s
         self.fatal: Optional[BackendError] = None
         self.calls = 0
         self.errors = 0
+        self.retries = 0
 
     async def _post(self, payload: Dict[str, Any]) -> Dict[str, Any]:
         if self.fatal is not None:
             raise RuntimeError(f"skipped after earlier error: {self.fatal}")
         prompt = payload["messages"][-1]["content"]
         tool_choice = payload.get("tool_choice")
-        start = time.monotonic()
-        try:
-            data = await super()._post(payload)
-        except Exception as exc:
-            self.errors += 1
-            message = redact_keys(str(exc))
-            self.log.emit("llm_error", seat=self.player_id, model=self.model, error=message,
-                          latency_s=round(time.monotonic() - start, 3))
-            self.fatal = self.fatal or classify_http_error(message)
-            raise
+        attempt = 0
+        while True:
+            start = time.monotonic()
+            try:
+                async with _inflight_semaphore(self.max_inflight):
+                    start = time.monotonic()
+                    data = await super()._post(payload)
+                break
+            except Exception as exc:
+                message = redact_keys(str(exc))
+                if is_gateway_rejection(message) and attempt < self.max_retries:
+                    delay = random.uniform(0, min(self.backoff_max_s, self.backoff_base_s * 2 ** attempt))
+                    self.retries += 1
+                    self.log.emit("retry", scope="llm_call", seat=self.player_id, attempt=attempt,
+                                  error=message[:200], delay_s=round(delay, 2))
+                    await asyncio.sleep(delay)
+                    attempt += 1
+                    continue
+                self.errors += 1
+                self.log.emit("llm_error", seat=self.player_id, model=self.model, error=message,
+                              latency_s=round(time.monotonic() - start, 3))
+                self.fatal = self.fatal or classify_http_error(message)
+                raise
         self.calls += 1
         msg = data["choices"][0]["message"]
         calls = [{"name": c["function"]["name"], "arguments": c["function"].get("arguments")}
@@ -102,7 +145,9 @@ def build_agents(setup: GameSetup, cfg: ArenaConfig, log: EventLog) -> Dict[int,
             if not os.getenv("OPENAI_API_KEY"):
                 raise NotLoggedIn("no OpenAI API key: set OPENAI_API_KEY (for example in a local .env file)")
             agents[seat] = LoggedLLMAgent(player_id=seat, role=role, condition=condition, model=spec.model,
-                                          seed=seed, log=log)
+                                          seed=seed, log=log, max_inflight=cfg.max_inflight_requests,
+                                          max_retries=cfg.llm_max_retries, backoff_base_s=cfg.backoff_base_s,
+                                          backoff_max_s=cfg.backoff_max_s)
         else:
             raise FatalBackendError(
                 f"provider {spec.provider!r} isn't supported for AvalonBot games: LLMAgent needs an "
@@ -204,6 +249,7 @@ async def play_game(setup: GameSetup, cfg: ArenaConfig, log: EventLog) -> Dict[s
             "deduction_acc": None if p_evil is None else float(spy_id_accurate(p_evil, evil)),
             "brier": None if p_evil is None else brier_score(p_evil, evil),
             "llm_calls": getattr(agents[i], "calls", 0), "llm_errors": getattr(agents[i], "errors", 0),
+            "llm_retries": getattr(agents[i], "retries", 0),
         })
     return {
         "status": "completed",

@@ -14,6 +14,7 @@ EVIL_ROLES = {"Morgana", "Mordred", "Oberon", "Minion", "Assassin"}
 
 # fields that can change between resumes without affecting game outcomes
 NON_SEMANTIC_FIELDS = {"concurrency", "num_games", "claude_bin", "cli_max_parallel", "llm_timeout_s",
+                       "max_inflight_requests",
                        "llm_max_retries", "max_game_retries", "backoff_base_s", "backoff_max_s"}
 
 
@@ -51,6 +52,7 @@ class ArenaConfig(BaseModel):
     llm_timeout_s: float = 180.0
     claude_bin: Optional[str] = None     # path to the Claude Code CLI; defaults to `claude` on PATH
     cli_max_parallel: int = 2            # max concurrent `claude -p` processes across all games
+    max_inflight_requests: int = 6       # max concurrent model API requests across all games (gateways cap this)
     api_max_tokens: int = 16000          # anthropic / openai: max output tokens per request
     # openai: any OpenAI-compatible endpoint; the key is read from OPENAI_API_KEY and never logged
     openai_base_url: Optional[str] = None  # defaults to OPENAI_BASE_URL, then api.openai.com
