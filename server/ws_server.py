@@ -354,13 +354,10 @@ async def run_live_game(session: GameSession, human_seat: Optional[int] = None) 
             if speaker != human_seat:
                 await session.speak(speaker, data["text"], seq)
             else:
-                speak_audio = getattr(session.human_agent, "speak_audio", True)
-                if session.voice and speak_audio:
-                    await session.speak(speaker, data["text"], seq)
-                else:
-                    await session.send("speaking", {"seat": speaker, "active": True}, seq)
-                    await session.sleep(0.8)
-                    await session.send("speaking", {"seat": speaker, "active": False}, seq)
+                # Human player already spoke with their own voice — do not have a bot repeat it!
+                await session.send("speaking", {"seat": speaker, "active": True}, seq)
+                await session.sleep(0.5)
+                await session.send("speaking", {"seat": speaker, "active": False}, seq)
         elif event_type in ("team_proposed", "team_vote_result", "quest_result"):
             data["votes"] = {str(p): v for p, v in data.get("votes", {}).items()}
             await session.send(event_type, data, seq)
