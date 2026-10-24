@@ -20,16 +20,26 @@ TTS_URL = "https://api.boson.ai/v1/audio/speech"
 CLIENT_SECRETS_URL = "https://api.boson.ai/v1/realtime/client_secrets"
 REALTIME_WS_URL = "wss://api.boson.ai/v1/realtime/"
 
+DEFAULT_VOICES = {
+    -1: os.getenv("BOSON_VOICE_NARRATOR", "nora"),
+    0: os.getenv("BOSON_VOICE_0", "marcus"),
+    1: os.getenv("BOSON_VOICE_1", "eleanor"),
+    2: os.getenv("BOSON_VOICE_2", "jake"),
+    3: os.getenv("BOSON_VOICE_3", "oliver"),
+    4: os.getenv("BOSON_VOICE_4", "chloe"),
+}
+
 SEAT_PROFILES = {
-    0: {"emotion": "determination", "style": None, "prosody": ["expressiveness_high"]},
-    1: {"emotion": "enthusiasm", "style": None, "prosody": ["expressiveness_high"]},
-    2: {"emotion": "anger", "style": None, "prosody": ["speed_fast", "expressiveness_high"]},
-    3: {"emotion": "amusement", "style": None, "prosody": ["speed_slow", "expressiveness_high"]},
-    4: {"emotion": "contemplation", "style": "whispering", "prosody": ["expressiveness_high"]},
+    -1: {"emotion": "contemplation", "style": None, "prosody": ["expressive_high"]},
+    0: {"emotion": "determination", "style": None, "prosody": ["expressive_high"]},
+    1: {"emotion": "enthusiasm", "style": None, "prosody": ["expressive_high"]},
+    2: {"emotion": "anger", "style": None, "prosody": ["speed_fast", "expressive_high"]},
+    3: {"emotion": "amusement", "style": None, "prosody": ["speed_slow", "expressive_high"]},
+    4: {"emotion": "contemplation", "style": "whispering", "prosody": ["expressive_high"]},
 }
 
 SEAT_VOICE_IDS = {
-    i: os.getenv(f"BOSON_VOICE_{i}", "default") for i in range(5)
+    i: DEFAULT_VOICES.get(i, "default") for i in range(-1, 5)
 }
 
 
@@ -41,7 +51,8 @@ def _build_control_tags(seat: int) -> str:
     if profile["emotion"]:
         tags += f"<|emotion:{profile['emotion']}|>"
     for p in profile.get("prosody", []):
-        tags += f"<|prosody:{p}|>"
+        token = "expressive_high" if p == "expressiveness_high" else p
+        tags += f"<|prosody:{token}|>"
     return tags
 
 
@@ -83,6 +94,8 @@ async def get_tts_audio(text: str, seat: int = 0) -> Optional[str]:
         "input": formatted_text,
         "voice": SEAT_VOICE_IDS.get(seat, "default"),
         "response_format": "wav",
+        "normalize": True,
+        "language": "eng",
     }
 
     try:
