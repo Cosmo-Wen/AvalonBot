@@ -1,0 +1,48 @@
+== runs/sol/rule_graph: 39 games with an assassination, 6.2 team votes per player
+   vote accuracy: Merlin 0.99, Servants 0.78
+   Merlin most accurate voter: 39/39 (alone at the top in 31)
+   vote-grading Assassin would hit: 34.0/39 (ties split evenly); real Assassin hit: 35/39
+   real Assassin's target was a top voter: 38/39
+   reason cites votes: 29/39
+   reason cites proposals: 14/39
+   reason cites speech: 13/39
+   reason cites quest results: 35/39
+   seed  0 [P0*:1.00 P2:0.80 P3:0.60] Merlin rank 1, HIT P0 | votes,speech,quest results
+   seed  1 [P0:1.00 P2*:1.00 P3:1.00] Merlin rank 1, miss P0 | speech,quest results
+   seed  2 [P0:1.00 P1:1.00 P4*:1.00] Merlin rank 1, miss P0 | votes,quest results
+   seed  3 [P1:0.67 P3*:1.00 P4:0.83] Merlin rank 1, HIT P3 | votes,quest results
+   seed  4 [P1:0.89 P2*:1.00 P3:0.56] Merlin rank 1, HIT P2 | votes,quest results
+   seed  5 [P0*:0.89 P2:0.78 P3:0.56] Merlin rank 1, HIT P0 | votes,quest results
+   seed  6 [P1:1.00 P2:1.00 P3*:1.00] Merlin rank 1, HIT P3 | votes,proposals
+   seed  7 [P0*:1.00 P1:0.60 P4:0.80] Merlin rank 1, HIT P0 | speech,quest results
+   seed  8 [P1:0.67 P2:0.83 P4*:1.00] Merlin rank 1, HIT P4 | votes,speech,quest results
+   seed  9 [P0:0.67 P2*:0.92 P3:0.67] Merlin rank 1, HIT P2 | proposals,quest results
+   seed 10 [P0:0.75 P1:0.75 P2*:1.00] Merlin rank 1, HIT P2 | speech
+   seed 11 [P0:0.70 P3*:1.00 P4:0.80] Merlin rank 1, HIT P3 | votes,speech,quest results
+   seed 12 [P0:0.67 P3*:1.00 P4:0.83] Merlin rank 1, HIT P3 | votes,proposals,quest results
+   seed 13 [P0:0.60 P3:0.80 P4*:1.00] Merlin rank 1, HIT P4 | votes,speech,quest results
+   seed 14 [P0:0.67 P1*:1.00 P4:0.83] Merlin rank 1, HIT P1 | votes,proposals,quest results
+   seed 15 [P2:0.80 P3*:1.00 P4:0.60] Merlin rank 1, HIT P3 | votes,speech,quest results
+   seed 16 [P2:0.80 P3:0.40 P4*:0.80] Merlin rank 1, HIT P4 | speech,quest results
+   seed 17 [P0*:1.00 P2:0.83 P3:0.67] Merlin rank 1, HIT P0 | votes,quest results
+   seed 18 [P1:0.86 P2*:1.00 P4:0.57] Merlin rank 1, miss P4 | speech,quest results
+   seed 19 [P1:0.86 P2*:1.00 P4:0.71] Merlin rank 1, HIT P2 | speech,quest results
+   seed 21 [P0*:1.00 P3:0.80 P4:0.80] Merlin rank 1, HIT P0 | votes,quest results
+   seed 22 [P1*:1.00 P2:0.67 P4:0.67] Merlin rank 1, HIT P1 | votes,quest results
+   seed 23 [P2:0.80 P3:1.00 P4*:1.00] Merlin rank 1, miss P3 | votes,quest results
+   seed 24 [P0:0.62 P2:0.75 P3*:1.00] Merlin rank 1, HIT P3 | votes,proposals,quest results
+   seed 25 [P0:0.83 P1*:1.00 P3:0.83] Merlin rank 1, HIT P1 | votes,proposals,quest results
+   seed 26 [P0:0.83 P2*:1.00 P3:0.67] Merlin rank 1, HIT P2 | votes,quest results
+   seed 27 [P1*:1.00 P2:1.00 P4:1.00] Merlin rank 1, HIT P1 | 
+   seed 28 [P1:0.80 P2:0.60 P3*:1.00] Merlin rank 1, HIT P3 | votes,proposals,quest results
+   seed 29 [P0*:1.00 P3:1.00 P4:1.00] Merlin rank 1, HIT P0 | proposals,quest results
+   seed 30 [P0:0.71 P2:0.86 P3*:1.00] Merlin rank 1, HIT P3 | votes,proposals,speech,quest results
+   seed 31 [P1:0.57 P3:0.86 P4*:1.00] Merlin rank 1, HIT P4 | votes,proposals,quest results
+   seed 32 [P1:0.80 P3*:1.00 P4:0.80] Merlin rank 1, HIT P3 | votes
+   seed 33 [P0:0.83 P2:0.83 P3*:1.00] Merlin rank 1, HIT P3 | votes,proposals,quest results
+   seed 34 [P0*:1.00 P1:0.83 P3:0.67] Merlin rank 1, HIT P0 | votes,proposals,quest results
+   seed 35 [P1*:1.00 P2:0.71 P4:0.71] Merlin rank 1, HIT P1 | votes,quest results
+   seed 36 [P2:0.78 P3*:1.00 P4:0.67] Merlin rank 1, HIT P3 | votes,proposals,quest results
+   seed 37 [P0:0.83 P2:0.67 P3*:1.00] Merlin rank 1, HIT P3 | votes,speech,quest results
+   seed 38 [P0:0.62 P1:0.88 P4*:1.00] Merlin rank 1, HIT P4 | votes,quest results
+   seed 39 [P0*:1.00 P2:1.00 P4:1.00] Merlin rank 1, HIT P0 | proposals,quest results
