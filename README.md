@@ -139,6 +139,16 @@ What this means:
 - **Allowance:** the two test runs used about 470k input and 33k output tokens, roughly 6% of a
   40-pair batch. Check the key's usage page to extrapolate spend against its $50 allowance before
   starting. The endpoint's prices aren't published here, so logs record tokens only.
+- **Measured on the full batch:** B and C games ran longer than estimated (about 75 calls against A's 67),
+  and the batch took about 7 hours: 8,674 calls, 13.2M input and 0.86M output tokens. Results and
+  the per-seed comparison: [`experiments/sol-ablation-2026-10-24/`](experiments/sol-ablation-2026-10-24/).
+
+### Belief-graph pages
+
+`python experiments/render_graphs.py --runs runs/sol --out runs/sol/graphs` writes one standalone HTML page
+per game and an `index.html` that pairs seeds across A, B and C. Each page replays the game into every
+player's memory, with the talk edges that player extracted live; a slider steps through the game. Open
+`index.html` in a browser (from WSL: `explorer.exe "$(wslpath -w runs/sol/graphs/index.html)"`).
 
 ## Acknowledgements
 
