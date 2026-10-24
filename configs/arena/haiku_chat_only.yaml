@@ -1,0 +1,26 @@
+# AvalonBot ablation, condition: chat_only. Every seat on Claude Haiku via `claude -p` (Claude Code login)
+# No API key needed. The good team plays chat_only; evil always plays chat_only.
+# Same base_seed in every condition, so game i has the same deal in each: one pair per game index.
+#   python -m arena check --config configs/arena/haiku_chat_only.yaml
+#   python -m arena run   --config configs/arena/haiku_chat_only.yaml --run-dir runs/haiku/chat_only
+
+seats:
+  - {provider: claude_cli, model: haiku}
+  - {provider: claude_cli, model: haiku}
+  - {provider: claude_cli, model: haiku}
+  - {provider: claude_cli, model: haiku}
+  - {provider: claude_cli, model: haiku}
+roles: [Merlin, Servant, Servant, Assassin, Minion]
+condition: chat_only
+
+num_games: 40         # same seeds as the gpt-6.1-sol batch, so pairs line up across models too
+base_seed: 0
+shuffle_roles: true
+shuffle_seats: false  # every seat plays the same model
+random_leader: true
+
+concurrency: 4         # games in parallel per process; A, B and C run as three processes
+max_inflight_requests: 4  # model calls in flight per process
+cli_max_parallel: 4   # claude -p processes per process (12 across A+B+C)
+max_game_retries: 0   # a failed game is replayed by re-running the same command
+llm_timeout_s: 180
