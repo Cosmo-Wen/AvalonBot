@@ -103,6 +103,8 @@ def test_rejection_classification():
     assert not is_gateway_rejection("LLM API Error (500): oops")
     assert is_gateway_rejection('LLM API Error (503): {"error":{"message":"Service temporarily unavailable, '
                                 'please retry later","type":"api_error"}}')
+    assert is_gateway_rejection('LLM API Error (502): {"error":{"message":"Upstream service temporarily '
+                                'unavailable","type":"upstream_error"}}')
 
 
 def test_stalled_request_times_out_and_is_retried(tmp_path, monkeypatch):

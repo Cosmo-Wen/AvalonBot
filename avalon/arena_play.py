@@ -49,9 +49,9 @@ def _inflight_semaphore(limit: int) -> asyncio.Semaphore:
 
 def is_gateway_rejection(message: str) -> bool:
     r"""A 429 the gateway sent before running the request (concurrency or rate limit, not quota), or
-    a 503 "temporarily unavailable". Neither request was served, so retrying can't be billed twice."""
+    a 502/503 "temporarily unavailable". Neither request was served, so retrying can't be billed twice."""
     lowered = message.lower()
-    if "(503)" in message and "temporarily unavailable" in lowered:
+    if ("(502)" in message or "(503)" in message) and "temporarily unavailable" in lowered:
         return True
     return "(429)" in message and ("rate_limit_error" in lowered or "concurrency" in lowered) \
         and not any(w in lowered for w in ("quota", "allowance"))
