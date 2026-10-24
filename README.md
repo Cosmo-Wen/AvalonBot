@@ -20,7 +20,7 @@ Each agent keeps a **belief graph**: its own estimate of how likely each other p
 | MVP | 5-player rules engine (Merlin, Assassin, 1 Minion, 2 Loyal Servants); LLM agents in two conditions (chat-only vs belief graph); headless self-play runner; metrics script |
 | MVP | Human plays one seat by voice; each bot speaks in its own voice |
 | Stretch | Live belief-graph panel; avatar for the speaking bot; human can interrupt a bot mid-accusation |
-| Out of scope | Percival, Morgana, Lady of the Lake; more than 5 players; fine-tuning |
+| Out of scope | Lady of the Lake; more than 5 players; fine-tuning |
 
 ## Architecture
 
@@ -70,6 +70,66 @@ python -m pytest tests -q
 `.env` holds `BOSON_API_KEY` for voice, plus `OPENAI_BASE_URL`, `OPENAI_API_KEY` and `OPENAI_MODEL`
 for the LLM players. Any OpenAI-compatible endpoint works, such as a Boson Marketplace key for
 `gpt-6.1-sol`. Never commit `.env`; git ignores it.
+
+## Play through Codex CLI
+
+Run `codex login` once with your ChatGPT account, then:
+
+```bash
+python -m arena check --config configs/arena/codex_chat_only.yaml
+python -m arena run --config configs/arena/codex_chat_only.yaml --run-dir runs/codex/chat_only
+```
+
+Use `codex_belief_graph.yaml` or `codex_rule_graph.yaml` for the other conditions.
+These configs use `provider: codex_cli` for all seats, including actions, memory extraction,
+and recall. They use your existing Codex login without an OpenAI or Anthropic API key.
+Set `codex_bin` in the YAML if `codex` is not on PATH; set each seat's `model` and `effort`
+to override the defaults. Each request starts an ephemeral session in a temporary directory.
+Subscription limits pause the run so it can be resumed with the same command.
+Requires a recent Codex CLI supporting `--ignore-user-config` and `--ephemeral`.
+See [official OpenAI documentation](https://developers.openai.com/codex/noninteractive).
+
+## Percival and Morgana experiment
+
+The optional lineup is Merlin, Percival, Servant, Assassin, Morgana. Percival sees an
+unlabeled Merlin/Morgana pair; only the Servant uses condition C. The paired conditions are
+P0 (`percival_condition: chat_only`) and P1 (`four_world`). All seats use Codex CLI at medium reasoning.
+This is a separate experiment from the historical A/B/C results.
+
+P1 maintains four worlds in log space, deriving both P(Merlin) and P(evil) from them.
+Merlin approving/proposing a Morgana team multiplies its world weight by 0.1; otherwise,
+supporting an evil-containing team multiplies it by 0.2. Morgana rejecting a team containing
+the Assassin multiplies that world by 0.5. Failed quests eliminate worlds with too few evil
+team members to explain the fails. Passed quests do not eliminate worlds. Forced hammer
+votes carry no soft evidence. The 0.1 factor replaces 0.2; independent vote signals multiply.
+Factors stay fixed before and after the smoke tests.
+
+P1 approves when P(all good) > 0.55, and privately follows a candidate's observed play above
+P(Merlin) > 0.8. Merlin uses prompt guidance to blend with public voting patterns; no policy
+forces incorrect votes. Morgana remains chat-only and is prompted to imitate Merlin.
+P0 reports its candidate probabilities once at game end; invalid reports remain missing.
+
+Smoke tests (one paired seed, two live games total):
+
+```bash
+python -m arena run --config configs/arena/percival_p0.yaml --num-games 1 --run-dir runs/percival/smoke/p0
+python -m arena run --config configs/arena/percival_p1.yaml --num-games 1 --run-dir runs/percival/smoke/p1
+python -m arena summarize --run-dir runs/percival/smoke/p1
+```
+
+Full experiment, when ready (40 paired games per condition):
+
+```bash
+python -m arena run --config configs/arena/percival_p0.yaml --run-dir runs/percival/p0
+python -m arena run --config configs/arena/percival_p1.yaml --run-dir runs/percival/p1
+```
+
+Logs include private observer-only `percival_beliefs` snapshots after proposals, votes, and
+quest results. They are never broadcast to other agents. Replay reconstructs the same table.
+`arena summarize` reports a separate `percival_experiment` section: assassination hit rate
+among games reaching assassination, Merlin's mean vote-accuracy rank, final P(true Merlin),
+quest success, and good wins, with denominators. Vote accuracy excludes forced hammer votes,
+scores approval against actual team alignment, and uses average ranks for ties.
 
 ## Batch runs (ablation)
 

@@ -312,3 +312,16 @@ The evil team is identical in every condition: same agents, prompts, and memory.
 - Belief graphs for Merlin or the evil team in the ablation
 - Learned weights. Everything is prompted or rule-based
 - Shared memory, or memory carried across games
+
+
+## Percival and Morgana
+
+The optional five-role experiment uses Merlin, Percival, Servant, Assassin, and Morgana.
+Percival's private knowledge contains an unlabeled pair of Merlin/Morgana candidates.
+P0 retains that knowledge and chat history. P1 additionally owns `PercivalBelief`, a four-world
+log-weight table whose P(Merlin), P(evil), and team probabilities are consistent marginals.
+It updates only from delivered public proposals, completed votes (excluding forced hammer
+votes), and quest outcomes. Discussion cannot eliminate or reweight worlds. Only failed
+quests eliminate worlds; contradictory hard evidence raises an error without resetting weights.
+The remaining Servant retains the existing six-pair condition-C model. Evil stays chat-only.
+Private observer snapshots in arena logs are not delivered to any player.

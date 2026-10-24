@@ -20,10 +20,12 @@ from dataclasses import dataclass, field
 from typing import Any, Dict, Iterable, List, Optional
 
 from .belief_graph import brier_score
-from .engine import AvalonEngine, Role
+from .engine import AvalonEngine, Role, ROLE_SIDES
 from .memory import PlayerMemory
 
 ARENA_ROLES = {
+    "Percival": Role.PERCIVAL,
+    "Morgana": Role.MORGANA,
     "Merlin": Role.MERLIN,
     "Servant": Role.LOYAL_SERVANT,
     "Assassin": Role.ASSASSIN,
@@ -47,7 +49,7 @@ class Replay:
 
     @property
     def true_evil(self) -> List[int]:
-        return sorted(p for p, role in self.roles.items() if role in (Role.ASSASSIN, Role.MINION))
+        return sorted(p for p, role in self.roles.items() if not ROLE_SIDES[role])
 
     def rule_vs_reported_brier(self, seat: int) -> Dict[str, float]:
         """Brier score of this Servant's graph P(evil) and of the P(evil) it reported in the game."""
@@ -129,7 +131,7 @@ class ArenaGraphAdapter:
             })
 
         elif kind == "evil_chat":
-            evil = [p for p, role in state.roles.items() if role in (Role.ASSASSIN, Role.MINION)]
+            evil = [p for p, role in state.roles.items() if not ROLE_SIDES[role]]
             self._deliver("evil_chat", {
                 "seq": seq, "turn": d["quest"], "round_num": 0, "speaker": d["seat"], "text": d["text"],
             }, seats=evil)
@@ -200,7 +202,8 @@ class ArenaGraphAdapter:
         self.engine.reset(preset_roles=roles, preset_leader=d["quest_leader"])
         memories = {
             seat: PlayerMemory(seat, self.engine.get_private_info(seat), belief_mode=self.belief_mode,
-                               merlin_graph=self.merlin_graph)
+                               merlin_graph=self.merlin_graph,
+                               percival_condition=d.get("percival_condition", "chat_only"))
             for seat in roles
         }
         self.state = Replay(roles=roles, first_leader=d["quest_leader"], memories=memories)

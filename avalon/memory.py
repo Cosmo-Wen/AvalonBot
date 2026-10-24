@@ -91,6 +91,7 @@ class PrivateKnowledge:
     side: bool
     seen_evil: Tuple[int, ...]
     my_quest_cards: Dict[int, bool] = field(default_factory=dict)
+    merlin_candidates: Tuple[int, ...] = ()
 
     @property
     def role_name(self) -> str:
@@ -109,6 +110,7 @@ class PlayerMemory:
         num_players: int = 5,
         belief_mode: str = "rule",
         merlin_graph: bool = False,
+        percival_condition: str = "chat_only",
     ):
         self.owner = owner
         self.num_players = num_players
@@ -116,7 +118,11 @@ class PlayerMemory:
             role=private_info["role"],
             side=bool(private_info["side"]),
             seen_evil=tuple(private_info.get("seen_evil", [])),
+            merlin_candidates=tuple(private_info.get("merlin_candidates", [])),
         )
+        from .percival import PercivalBelief
+        self.percival = (PercivalBelief(owner, self.private.merlin_candidates, num_players)
+                         if self.private.role == Role.PERCIVAL and percival_condition == "four_world" else None)
         self.log: List[LogEntry] = []
         self._by_seq: Dict[int, LogEntry] = {}
         self.graph = KnowledgeGraph(owner, num_players)
@@ -169,6 +175,8 @@ class PlayerMemory:
             fails=data.get("num_fails"),
             success=data.get("success"),
         )
+        if self.percival is not None:
+            self.percival.update(entry)
         self.log.append(entry)
         self._by_seq[seq] = entry
         self._update_graph(entry)
@@ -375,11 +383,15 @@ class PlayerMemory:
                 lines.append(f"You saw at the start that {who} are evil.")
             else:
                 lines.append(f"Your evil partner: {who}.")
+        if self.private.merlin_candidates:
+            lines.append(f"Your unlabeled Merlin/Morgana candidates: {list(self.private.merlin_candidates)}. Exactly one is Merlin; never disclose them.")
         for q, card in sorted(self.private.my_quest_cards.items()):
             lines.append(f"Quest {q}: you played {'Success' if card else 'Fail'}.")
         return "\n".join(lines)
 
     def render_table(self) -> str:
+        if self.percival is not None:
+            return self.percival.render() + "\n" + self.graph.render_table(self.percival.p_evil)
         if self.merlin is not None:
             table = self.graph.render_table(self.merlin.p_merlin, belief_name="P(Merlin)")
         else:

@@ -19,6 +19,7 @@ def _parse_shard(s: str):
 
 def summarize(run_dir: str) -> dict:
     r"""Aggregate final `game_end` events across all (sharded) game logs in a run dir."""
+    percival_ends = []
     statuses = Counter()
     winners = Counter()
     by_name = defaultdict(lambda: {"games": 0, "wins": 0, "deduction_acc": 0.0})
@@ -43,6 +44,8 @@ def summarize(run_dir: str) -> dict:
                 u["cost_usd"] += e["data"].get("cost_usd", 0.0)
         if end["status"] != "completed":
             continue
+        if end.get("percival_metrics") is not None:
+            percival_ends.append(end)
         winners[f"{end['winner']}:{end['reason']}"] += 1
         for seat in end["seats"]:
             n = by_name[seat["name"]]
@@ -65,7 +68,9 @@ def summarize(run_dir: str) -> dict:
             out[k] = row
         return out
 
+    from avalon.percival_metrics import summarize_percival
     return {
+        **({"percival_experiment": summarize_percival(percival_ends)} if percival_ends else {}),
         "statuses": dict(statuses),
         "outcomes": dict(winners),
         "by_participant": rate(by_name),

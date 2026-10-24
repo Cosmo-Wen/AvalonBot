@@ -1,0 +1,15 @@
+# Uses the existing `codex login` session; no API key required.
+seats:
+  - {provider: codex_cli}
+  - {provider: codex_cli}
+  - {provider: codex_cli}
+  - {provider: codex_cli}
+  - {provider: codex_cli}
+condition: belief_graph
+num_games: 1
+base_seed: 0
+shuffle_seats: false
+concurrency: 1
+cli_max_parallel: 2
+max_game_retries: 0
+llm_timeout_s: 180

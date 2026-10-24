@@ -32,6 +32,7 @@ The CLI loads a local `.env` (gitignored) before running.
 
 Model backends (`backends.py`) are text-only completions with logging, retry rules and error
 classification:
+- **`codex_cli`:** Codex headless, using the existing Codex login; also supports AvalonBot game tools.
 - **`claude_cli`:** Claude Code headless, on the user's own login.
 - **`anthropic`:** the Claude API.
 - **`openai`:** any OpenAI-compatible Responses API.
@@ -39,6 +40,7 @@ classification:
 
 AvalonBot's LLMAgent needs tool calls, so it talks to the endpoint itself, and the backends serve
 `check` and text-only play functions. In AvalonBot games, `provider: openai` seats are LLMAgents and
+`provider: codex_cli` seats use Codex for the same actions and memory tools, and
 `provider: fake` seats are the offline HeuristicAgent.
 
 Per-game log events: `game_start` (seed, seats, roles, condition), `discussion`, `team_proposed`,

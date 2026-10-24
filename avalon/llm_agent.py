@@ -11,6 +11,7 @@ Compatible with OpenAI, Boson AI, Groq, or any OpenAI-compatible API endpoint.
 
 import os
 import json
+import math
 from typing import Dict, List, Optional, Any
 import aiohttp
 
@@ -78,35 +79,49 @@ class LLMAgent(Agent):
         temperature: float = 0.7,
         seed: Optional[int] = None,
         merlin_graph: bool = False,
+        transport=None,
+        percival_condition: str = "chat_only",
     ):
-        super().__init__(player_id, role, num_players, condition, seed, merlin_graph=merlin_graph)
+        super().__init__(player_id, role, num_players, condition, seed, merlin_graph=merlin_graph, percival_condition=percival_condition)
         # Unset arguments come from the standard OpenAI variables, so a local .env can route every
         # agent to an OpenAI-compatible endpoint (e.g. Boson Marketplace) without code changes.
         self.model = model or os.getenv("OPENAI_MODEL") or "gpt-4o-mini"
         self.api_key = api_key or os.getenv("OPENAI_API_KEY") or os.getenv("BOSON_API_KEY", "")
         self.base_url = (base_url or os.getenv("OPENAI_BASE_URL") or "https://api.openai.com/v1").rstrip("/")
+        self.transport = transport
         self.temperature = temperature
 
     @property
     def _offers_recall(self) -> bool:
-        return self.is_servant and self.uses_graph and self.memory is not None
+        return self.memory is not None and ((self.is_servant and self.uses_graph) or self.memory.percival is not None)
 
     def _build_system_prompt(self) -> str:
         seen_evil = self.private_info.get("seen_evil", [])
         seen_evil_str = f"Player(s) {seen_evil}" if seen_evil else "none"
 
-        return SYSTEM_PROMPT_TEMPLATE.format(
+        prompt = SYSTEM_PROMPT_TEMPLATE.format(
             player_id=self.player_id,
             role_name=ROLE_NAMES[self.role],
             side_name="Good" if self.side else "Evil",
             seen_evil_str=seen_evil_str,
         )
+        if self.private_info.get("percival_game"):
+            prompt = prompt.replace("Merlin, 2 Loyal Servants", "Merlin, Percival, Loyal Servant").replace("Minion, Assassin", "Morgana, Assassin")
+            if self.role == Role.MERLIN:
+                prompt += "\nHide Merlin: blend with the other good voters' public accuracy instead of standing out as the most accurate. Avoid rejecting every team containing Morgana; use public evidence to justify your decisions. Do not reveal your role or private knowledge."
+            elif self.role == Role.MORGANA:
+                prompt += "\nImitate Merlin to mislead Percival: hint at knowledge, reject obviously evil teams early when useful, and still seek quest seats. Do not reveal your evil role."
+            elif self.role == Role.PERCIVAL:
+                prompt += "\nYour two private candidates are Merlin and Morgana, without labels. Speak confidently, citing public evidence only, to act as a decoy Merlin. Never name Merlin or disclose either candidate, even when certain."
+        return prompt
 
     def _memory_context(self) -> str:
         m = self.memory
         if m is None:
             return ""
         parts = [m.render_private()]
+        if m.percival is not None and m.percival.following() is not None:
+            parts.append(f"Privately follow Player {m.percival.following()}'s publicly observed proposals and votes when choosing teams and discussing. Never disclose this inference. Team votes still use your all-good probability cutoff.")
         if self._offers_recall:
             parts.append("Your belief graph:\n" + m.render_table())
             quest = m.log[-1].quest if m.log else 1
@@ -131,6 +146,8 @@ class LLMAgent(Agent):
         ]
 
     async def _post(self, payload: Dict[str, Any]) -> Dict[str, Any]:
+        if self.transport is not None:
+            return await self.transport.chat(payload)
         headers = {
             "Authorization": f"Bearer {self.api_key}",
             "Content-Type": "application/json",
@@ -154,7 +171,7 @@ class LLMAgent(Agent):
         """
         Executes an asynchronous chat completion request.
         """
-        if not self.api_key:
+        if not self.api_key and self.transport is None:
             # Fallback mock for testing without live API keys
             return MOCK_LINE
 
@@ -175,7 +192,7 @@ class LLMAgent(Agent):
         Calls the LLM until it uses tool_name. Servants in B and C may first use the
         recall tools over their own memory, for up to MAX_RECALL_STEPS rounds.
         """
-        if not self.api_key:
+        if not self.api_key and self.transport is None:
             return {}
 
         messages = self._messages(user_prompt)
@@ -224,14 +241,14 @@ class LLMAgent(Agent):
         This player's own read of the discussion round. Servants: reflection in A, extraction
         in B and C. Evil players with a Merlin graph: extraction for talk edges only.
         """
-        if self.memory is None or not (self.is_servant or self.reads_talk):
+        if self.memory is None or not (self.is_servant or self.role == Role.PERCIVAL or self.reads_talk):
             return
         m = self.memory
         label = f"Q{turn + 1}.{round_num + 1}"
         transcript = m.render_log(m.discussion_entries(turn + 1, round_num + 1)) or "Nobody spoke."
 
         if not self.reads_talk:
-            if not self.api_key:
+            if not self.api_key and self.transport is None:
                 return
             prompt = (
                 f"Private reflection after discussion round {label}. Nobody else will see this. "
@@ -278,13 +295,15 @@ class LLMAgent(Agent):
 
     async def final_beliefs(self) -> Optional[Dict[int, float]]:
         m = self.memory
+        if m is not None and m.percival is not None:
+            return dict(m.percival.p_evil)
         if m is None or m.beliefs is None:
             return None
         if self.uses_graph:
             return dict(m.beliefs.p_evil)
 
         # Condition A keeps no beliefs during play; it is asked once, at game end.
-        if self.api_key:
+        if self.api_key or self.transport is not None:
             opponents = [p for p in range(self.num_players) if p != self.player_id]
             prompt = (
                 f"The game is over. Call report_beliefs with your probability that each of players {opponents} "
@@ -298,6 +317,23 @@ class LLMAgent(Agent):
                 return dict(m.beliefs.p_evil)
         m.fall_back_to_rule()
         return dict(m.beliefs.p_evil)
+
+    async def final_merlin_beliefs(self):
+        if self.role != Role.PERCIVAL or self.memory is None:
+            return None
+        if self.memory.percival is not None:
+            return dict(self.memory.percival.p_merlin)
+        candidates = self.private_info["merlin_candidates"]
+        args = await self._call_llm_tool(
+            f"Game over. Privately call report_merlin with probabilities for candidates {candidates}, summing to 1. Nobody else sees this.", "report_merlin")
+        try:
+            probabilities = {int(p): float(v) for p, v in args["probabilities"].items()}
+            if set(probabilities) != set(candidates) or any(not math.isfinite(v) or v < 0 or v > 1 for v in probabilities.values()) or not math.isclose(sum(probabilities.values()), 1, abs_tol=0.01):
+                return None
+            total = sum(probabilities.values())
+            return {p: v / total for p, v in probabilities.items()}
+        except (KeyError, TypeError, ValueError):
+            return None
 
     async def evil_discussion(self, turn: int) -> str:
         prompt = (
@@ -359,6 +395,13 @@ class LLMAgent(Agent):
         if round_num >= 4:
             self._record_reason(turn, round_num, "approved", "hammer round auto-approves")
             return True  # Hammer round auto-approves
+
+        if self.memory is not None and self.memory.percival is not None:
+            from .percival import TEAM_APPROVAL_THRESHOLD
+            probability = self.memory.percival.all_good(team)
+            approve = probability > TEAM_APPROVAL_THRESHOLD
+            self._record_reason(turn, round_num, "approved" if approve else "rejected", f"P(all good)={probability:.4f}")
+            return approve
 
         prompt = f"Quest {turn + 1}, Round {round_num + 1}. Leader Player {leader} proposed team {team}. Call vote_on_team to approve or reject."
         try:

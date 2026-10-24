@@ -115,6 +115,10 @@ _P_EVIL_SCHEMA = {
 }
 
 MEMORY_TOOL_DEFINITIONS = [
+    {"type": "function", "function": {
+        "name": "report_merlin", "description": "Privately report P(Merlin) for your two candidates at game end.",
+        "parameters": {"type": "object", "properties": {"probabilities": {
+            "type": "object", "additionalProperties": {"type": "number"}}}, "required": ["probabilities"]}}},
     {
         "type": "function",
         "function": {

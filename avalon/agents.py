@@ -38,7 +38,9 @@ class Agent(ABC):
         condition: str = "chat_only",  # "chat_only" (A), "belief_graph" (B), "rule_graph" (C)
         seed: Optional[int] = None,
         merlin_graph: bool = False,  # Demo only: evil keeps P(Merlin). Keep off in the ablation.
+        percival_condition: str = "chat_only",
     ):
+        self.percival_condition = percival_condition
         self.merlin_graph = merlin_graph
         self.player_id = player_id
         self.role = role
@@ -71,6 +73,7 @@ class Agent(ABC):
             self.player_id, info, self.num_players,
             belief_mode=belief_mode,
             merlin_graph=self.merlin_graph,
+            percival_condition=self.percival_condition,
         )
 
     @property
@@ -108,6 +111,8 @@ class Agent(ABC):
         This player's own estimate that `player` is evil, or None if it has none.
         Servants use their graph only in conditions B and C.
         """
+        if self.memory is not None and self.memory.percival is not None:
+            return self.memory.percival.p_evil.get(player, 0.0)
         seen_evil = self.private_info.get("seen_evil", [])
         if self.role == Role.MERLIN:
             return 1.0 if player in seen_evil else 0.0
@@ -125,9 +130,16 @@ class Agent(ABC):
 
     async def final_beliefs(self) -> Optional[Dict[int, float]]:
         """P(evil) at game end, for metrics. Only Loyal Servants report one."""
+        if self.memory is not None and self.memory.percival is not None:
+            return dict(self.memory.percival.p_evil)
         if self.memory is None or self.memory.beliefs is None:
             return None
         return dict(self.memory.beliefs.p_evil)
+
+    async def final_merlin_beliefs(self):
+        if self.memory is not None and self.memory.percival is not None:
+            return dict(self.memory.percival.p_merlin)
+        return None
 
     @abstractmethod
     async def team_discussion(
@@ -320,6 +332,10 @@ class HeuristicAgent(Agent):
         # Hammer (round 4) auto-approves
         if round_num >= 4:
             return True, "hammer round auto-approves"
+
+        if self.memory is not None and self.memory.percival is not None:
+            from .percival import TEAM_APPROVAL_THRESHOLD
+            return self.memory.percival.all_good(team) > TEAM_APPROVAL_THRESHOLD, "four-world all-good probability"
 
         if self.side:
             if self.player_id in team:

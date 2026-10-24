@@ -467,6 +467,9 @@ class FakeBackend:
 def make_backend(spec: SeatSpec, cfg: ArenaConfig, seed: int, model: Optional[str] = None):
     if spec.provider == "fake":
         return FakeBackend(seed)
+    if spec.provider == "codex_cli":
+        from .codex_backend import CodexCLIBackend
+        return CodexCLIBackend(model or spec.model, cfg, spec.effort)
     if spec.provider == "anthropic":
         return AnthropicBackend(model or spec.model, cfg, spec.effort)
     if spec.provider == "openai":
