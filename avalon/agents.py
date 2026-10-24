@@ -140,15 +140,61 @@ class HeuristicAgent(Agent):
     """
 
     async def team_discussion(self, turn: int, round_num: int, leader: int, team_size: int) -> str:
+        # Leader utterances
         if self.player_id == leader:
-            return f"As leader for Quest {turn + 1}, I will propose a trustworthy team of size {team_size}."
+            leader_templates = [
+                f"As leader for Quest {turn + 1}, I have reviewed past votes carefully. I will propose a disciplined team of size {team_size}.",
+                f"We cannot afford errors on Quest {turn + 1}. As leader, I am putting together {team_size} players with solid records.",
+                f"I take responsibility as leader for Quest {turn + 1}. I will draft a team that can bring home a Pass.",
+                f"The realm depends on this mission. As leader, I'm selecting {team_size} players I genuinely trust.",
+            ]
+            return self.rng.choice(leader_templates)
+
+        top_suspect = 0
+        safest_partner = (self.player_id + 1) % self.num_players
+        if self.belief_graph:
+            suspects = [p for p in self.belief_graph.get_top_suspects(self.num_players) if p != self.player_id]
+            if suspects:
+                top_suspect = suspects[0]
+            safest = [p for p in self.belief_graph.get_least_suspects(self.num_players) if p != self.player_id]
+            if safest:
+                safest_partner = safest[0]
+
+        # Merlin utterances (must guide good while evading Assassin)
+        if self.role == Role.MERLIN:
+            merlin_templates = [
+                f"I advise extreme caution regarding Player {top_suspect}. Their voting record raises major doubts.",
+                f"If we want Quest {turn + 1} to succeed, Player {safest_partner} seems like a much safer choice than Player {top_suspect}.",
+                f"We cannot rush this proposal. Look at how the approvals lined up on the previous rounds.",
+                f"I urge the leader to keep the team composition clean. Player {top_suspect}'s claims do not add up.",
+            ]
+            return self.rng.choice(merlin_templates)
+
+        # Loyal Servant utterances (earnest investigation, defending self, questioning suspects)
         if self.side:
-            if self.belief_graph:
-                top_suspect = self.belief_graph.get_top_suspects(1)[0]
-                return f"I want to make sure Player {top_suspect} is not on this mission."
-            return f"I support building a clean good team for Quest {turn + 1}."
+            servant_templates = [
+                f"I know with 100% certainty that I am loyal to Arthur. Put me on this mission if you want a Pass.",
+                f"Player {top_suspect}'s actions make me very nervous. Why did they support that risky lineup?",
+                f"We need to test players with clean voting histories. I trust Player {safest_partner} more than Player {top_suspect}.",
+                f"Remember we only need 3 successful quests to win. We must vote down any team that includes Player {top_suspect}.",
+            ]
+            if round_num >= 3:
+                servant_templates.append(f"We are at round {round_num + 1} and nearing the hammer! We must agree on a loyal team now.")
+            return self.rng.choice(servant_templates)
+
+        # Evil utterances (Minion / Assassin: bluffing, deflecting onto innocent players, feigning indignation)
         else:
-            return f"I am a loyal servant of Arthur. Put me on the quest team."
+            seen_evil = self.private_info.get("seen_evil", [])
+            # Pick a good player to deflect blame onto
+            innocent_targets = [p for p in range(self.num_players) if p not in seen_evil and p != self.player_id]
+            target = self.rng.choice(innocent_targets) if innocent_targets else top_suspect
+            evil_templates = [
+                f"I have fought honorably for Arthur! Accusing me is a complete distraction from the real spies.",
+                f"Why is everyone ignoring Player {target}? Their behavior has been suspicious from the very first round.",
+                f"I am ready to march on Quest {turn + 1} and prove my loyalty on the battlefield. Put me on the team.",
+                f"Player {target} is deflecting attention away from themselves. We should examine their vote record.",
+            ]
+            return self.rng.choice(evil_templates)
 
     async def propose_team(self, turn: int, team_size: int) -> List[int]:
         team = [self.player_id]

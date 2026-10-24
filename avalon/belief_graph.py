@@ -170,6 +170,14 @@ class BeliefGraph:
         candidates.sort(key=lambda x: x[1], reverse=True)
         return [p for p, _ in candidates[:k]]
 
+    def get_least_suspects(self, k: int = 2) -> List[int]:
+        """
+        Returns the k players with lowest P(evil), excluding owner.
+        """
+        candidates = [(p, self.p_evil[p]) for p in range(self.num_players) if p != self.owner]
+        candidates.sort(key=lambda x: x[1])
+        return [p for p, _ in candidates[:k]]
+
     def is_spy_id_accurate(self, true_evil_players: Set[int]) -> bool:
         """
         Checks whether the top-2 suspects are exactly the two evil players.

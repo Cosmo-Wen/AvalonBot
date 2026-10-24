@@ -31,20 +31,31 @@ except ImportError:
 
 
 DEFAULT_SEAT_VOICES: Dict[int, str] = {
-    0: "male_1",
-    1: "female_1",
-    2: "male_2",
-    3: "female_2",
-    4: "default",
+    0: os.getenv("BOSON_VOICE_0", "default"),
+    1: os.getenv("BOSON_VOICE_1", "default"),
+    2: os.getenv("BOSON_VOICE_2", "default"),
+    3: os.getenv("BOSON_VOICE_3", "default"),
+    4: os.getenv("BOSON_VOICE_4", "default"),
 }
 
-# Tones for offline/mock synthesizer (Hz)
+# Distinct acoustic profiles (speed multiplier + baseline emotion) per seat
+# Note: '<|emotion:suspicious|>' sounds flat/subtle in speech synthesis, so we use
+# higher-contrast tags like 'confident', 'angry', 'surprised', and varied tempo speeds.
+SEAT_PROSODY = {
+    0: {"speed": "0.92", "emotion": "confident"},  # Deliberate, steady, self-assured
+    1: {"speed": "1.00", "emotion": "neutral"},    # Standard conversational pace
+    2: {"speed": "1.15", "emotion": "surprised"},  # Fast, animated, energetic
+    3: {"speed": "0.88", "emotion": "angry"},      # Low tempo, intense, firm
+    4: {"speed": "1.06", "emotion": "confident"},  # Measured, guiding, authoritative
+}
+
+# Tones for offline fallback synthesizer (Hz)
 SEAT_TONE_FREQS = {
-    0: 220,  # A3 (Minion / low)
-    1: 440,  # A4 (Servant 1)
-    2: 554,  # C#5 (Servant 2)
-    3: 330,  # E4 (Assassin)
-    4: 659,  # E5 (Merlin / high)
+    0: 220,  # A3 (low)
+    1: 440,  # A4 (mid)
+    2: 554,  # C#5 (high-mid)
+    3: 330,  # E4 (firm)
+    4: 659,  # E5 (high)
 }
 
 
@@ -101,15 +112,22 @@ class HiggsTTSClient:
         voice: str = "default",
         save_path: Optional[Path] = None,
         emotion: Optional[str] = None,
+        speed: Optional[str] = None,
         seat: int = 0,
     ) -> Optional[bytes]:
         """
         Synthesizes text into audio bytes via Boson Higgs TTS 3.
-        Supports Higgs inline emotion tags (e.g. <|emotion:suspicious|>).
+        Supports Higgs inline speed and emotion tags (e.g. <|speed:0.92|><|emotion:confident|>).
         """
         formatted_text = text
-        if emotion and not text.startswith("<|"):
-            formatted_text = f"<|emotion:{emotion}|>{text}"
+        prefix_tags = ""
+        if speed and f"<|speed:" not in text:
+            prefix_tags += f"<|speed:{speed}|>"
+        if emotion and f"<|emotion:" not in text:
+            prefix_tags += f"<|emotion:{emotion}|>"
+
+        if prefix_tags and not text.startswith("<|"):
+            formatted_text = f"{prefix_tags}{text}"
 
         # If API key is present, call live Boson API
         if self.api_key:
@@ -134,7 +152,7 @@ class HiggsTTSClient:
                             return audio_bytes
                         else:
                             err_text = await resp.text()
-                            print(f"[Higgs TTS Error] API returned HTTP {resp.status}: {err_text}")
+                            print(f"[Higgs TTS Error] API returned HTTP {resp.status} for voice '{voice}': {err_text}")
             except Exception as e:
                 print(f"[Higgs TTS Error] Connection failed: {e}")
 
@@ -155,7 +173,7 @@ class HiggsTTSClient:
 
         if HAS_WINSOUND and wav_path.exists():
             try:
-                # SND_FILENAME plays WAV synchronously or asynchronously
+                # SND_FILENAME plays WAV synchronously so lines don't talk over each other
                 winsound.PlaySound(str(wav_path), winsound.SND_FILENAME)
             except Exception as e:
                 print(f"[AudioPlayer] Playback error: {e}")
@@ -167,31 +185,41 @@ class HiggsTTSClient:
         turn: int,
         round_num: int,
         emotion: Optional[str] = None,
+        speed: Optional[str] = None,
     ) -> Optional[Path]:
         """
         Synthesizes and plays a player's line out loud in their designated seat voice.
+        Applies seat-specific prosody and context-aware emotion.
         """
         voice = self.get_voice_for_seat(seat)
         save_file = self.cache_dir / f"turn_{turn + 1}_round_{round_num + 1}_seat_{seat}.wav"
 
-        # Determine emotional tone if not provided
+        prosody = SEAT_PROSODY.get(seat, {"speed": "1.00", "emotion": "neutral"})
+        chosen_speed = speed or prosody.get("speed", "1.00")
+
+        # Contextual emotion selection (avoiding 'suspicious' which produces subtle/flat audio)
         if not emotion:
             lower = text.lower()
-            if "suspect" in lower or "make sure" in lower:
-                emotion = "suspicious"
-            elif "loyal" in lower or "trustworthy" in lower:
-                emotion = "confident"
-            elif "why" in lower or "protest" in lower:
-                emotion = "defensive"
+            if "sabotage" in lower or "failed" in lower or "how" in lower:
+                chosen_emotion = "surprised"  # High energy reaction
+            elif "accuse" in lower or "defend" in lower or "protest" in lower or "not me" in lower:
+                chosen_emotion = "angry"      # Sharp, defensive inflection
+            elif "leader" in lower or "trust" in lower or "servant" in lower or "solid" in lower:
+                chosen_emotion = "confident"  # Resonant, firm tone
+            else:
+                chosen_emotion = prosody.get("emotion", "neutral")
+        else:
+            chosen_emotion = emotion
 
-        print(f"  [Higgs TTS] Synthesizing Player {seat} (Voice: {voice}, Emotion: {emotion or 'neutral'})...")
+        print(f"  [Higgs TTS] Synthesizing Player {seat} (Voice: {voice}, Speed: {chosen_speed}, Emotion: {chosen_emotion})...")
 
         # Synthesize audio
         await self.synthesize(
             text=text,
             voice=voice,
             save_path=save_file,
-            emotion=emotion,
+            emotion=chosen_emotion,
+            speed=chosen_speed,
             seat=seat,
         )
 
