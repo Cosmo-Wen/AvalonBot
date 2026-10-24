@@ -1,0 +1,96 @@
+{
+ "statuses": {
+  "completed": 40
+ },
+ "outcomes": {
+  "evil:missions": 15,
+  "good:missions_and_assassin_missed": 3,
+  "evil:assassination": 22
+ },
+ "by_participant": {
+  "llm:gpt-6.1-sol#0": {
+   "games": 40,
+   "wins": 17,
+   "win_rate": 0.425,
+   "deduction_acc": 0.938
+  },
+  "llm:gpt-6.1-sol#1": {
+   "games": 40,
+   "wins": 21,
+   "win_rate": 0.525,
+   "deduction_acc": 0.929
+  },
+  "llm:gpt-6.1-sol#2": {
+   "games": 40,
+   "wins": 16,
+   "win_rate": 0.4,
+   "deduction_acc": 0.889
+  },
+  "llm:gpt-6.1-sol#3": {
+   "games": 40,
+   "wins": 14,
+   "win_rate": 0.35,
+   "deduction_acc": 1.0
+  },
+  "llm:gpt-6.1-sol#4": {
+   "games": 40,
+   "wins": 15,
+   "win_rate": 0.375,
+   "deduction_acc": 0.941
+  }
+ },
+ "by_agent_and_role": {
+  "llm:gpt-6.1-sol as Assassin": {
+   "games": 40,
+   "wins": 37,
+   "win_rate": 0.925
+  },
+  "llm:gpt-6.1-sol as Merlin": {
+   "games": 40,
+   "wins": 3,
+   "win_rate": 0.075
+  },
+  "llm:gpt-6.1-sol as Minion": {
+   "games": 40,
+   "wins": 37,
+   "win_rate": 0.925
+  },
+  "llm:gpt-6.1-sol as Servant": {
+   "games": 80,
+   "wins": 6,
+   "win_rate": 0.075
+  }
+ },
+ "usage_by_participant": {
+  "llm:gpt-6.1-sol#0": {
+   "calls": 543,
+   "input_tokens": 806146,
+   "output_tokens": 38730,
+   "cost_usd": 0.0
+  },
+  "llm:gpt-6.1-sol#1": {
+   "calls": 533,
+   "input_tokens": 775734,
+   "output_tokens": 38337,
+   "cost_usd": 0.0
+  },
+  "llm:gpt-6.1-sol#2": {
+   "calls": 540,
+   "input_tokens": 808726,
+   "output_tokens": 39419,
+   "cost_usd": 0.0
+  },
+  "llm:gpt-6.1-sol#3": {
+   "calls": 519,
+   "input_tokens": 752788,
+   "output_tokens": 37486,
+   "cost_usd": 0.0
+  },
+  "llm:gpt-6.1-sol#4": {
+   "calls": 543,
+   "input_tokens": 809960,
+   "output_tokens": 37789,
+   "cost_usd": 0.0
+  }
+ }
+}

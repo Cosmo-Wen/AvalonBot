@@ -1,0 +1,17 @@
+<!DOCTYPE html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Ablation belief graphs</title>
+<style>
+:root { --bg: #fff; --fg: #1f2328; --line: #d0d7de; --good: #1a7f37; --evil: #cf222e; }
+@media (prefers-color-scheme: dark) { :root { --bg: #0d1117; --fg: #e6edf3; --line: #30363d; --good: #3fb950; --evil: #f85149; } }
+body { background: var(--bg); color: var(--fg); font: 14px/1.4 system-ui, sans-serif; margin: 24px 16px; }
+table { border-collapse: collapse; } th, td { border: 1px solid var(--line); padding: 6px 10px; text-align: left; }
+a { color: inherit; font-weight: 600; } .good a { color: var(--good); } .evil a { color: var(--evil); }
+small { opacity: .7; }
+</style></head><body>
+<h1>Belief graphs by seed</h1>
+<p>Seed <i>i</i> is the same deal in every condition. Each link replays that game into every player's memory.</p>
+<table><tr><th>seed</th><th>A chat_only</th><th>B belief_graph</th><th>C rule_graph</th></tr>
+<tr><th>0</th><td class="evil"><a href="A_chat_only_game_00000.html">evil</a><br><small>missions</small></td><td class="evil"><a href="B_belief_graph_game_00000.html">evil</a><br><small>assassination</small></td><td class="evil"><a href="C_rule_graph_game_00000.html">evil</a><br><small>assassination</small></td></tr>
+<tr><th>2</th><td class="good"><a href="A_chat_only_game_00002.html">good</a><br><small>missions_and_assassin_missed</small></td><td class="good"><a href="B_belief_graph_game_00002.html">good</a><br><small>missions_and_assassin_missed</small></td><td class="good"><a href="C_rule_graph_game_00002.html">good</a><br><small>missions_and_assassin_missed</small></td></tr>
+</table></body></html>

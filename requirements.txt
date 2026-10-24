@@ -1,0 +1,11 @@
+# AvalonBot: engine, agents, belief graph, voice
+aiohttp>=3.8
+python-dotenv>=1.0
+# Batch runner (arena/)
+pydantic~=1.10.13
+numpy>=1.24,<2
+pyyaml~=6.0
+pytest>=7
+# Optional arena backends, only for text-only play functions:
+# openai>=1.66,<2      (stay on 1.x: openai 3.37 fails to import alongside anthropic 2.x)
+# anthropic>=2.0.0

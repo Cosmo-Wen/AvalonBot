@@ -15,7 +15,14 @@ import json
 import re
 
 from .engine import Role, Phase, ROLE_NAMES, ROLE_SIDES
-from .belief_graph import BeliefGraph
+from .memory import PlayerMemory
+
+
+GRAPH_CONDITIONS = ("belief_graph", "rule_graph")
+
+_ACCUSE_WORDS = ("not on this mission", "suspicious", "traitor", "trap", "keep player", "do not let", "don't trust", "sabotage", "deflecting", "filthy", "ignoring")
+_DEFEND_WORDS = ("trust player", "safer choice", "far safer", "is fine", "innocent")
+_PLAYER_REF = re.compile(r"player\s+(\d)", re.IGNORECASE)
 
 
 class Agent(ABC):
@@ -30,7 +37,9 @@ class Agent(ABC):
         num_players: int = 5,
         condition: str = "chat_only",  # "chat_only" (A), "belief_graph" (B), "rule_graph" (C)
         seed: Optional[int] = None,
+        merlin_graph: bool = False,  # Demo only: evil keeps P(Merlin). Keep off in the ablation.
     ):
+        self.merlin_graph = merlin_graph
         self.player_id = player_id
         self.role = role
         self.side = ROLE_SIDES[role]
@@ -38,63 +47,87 @@ class Agent(ABC):
         self.condition = condition
         self.rng = random.Random(seed)
 
-        # Belief graph initialized if in condition B or C, or if owner needs it for eval
-        self.belief_graph: Optional[BeliefGraph] = None
-        if self.condition in ("belief_graph", "rule_graph") or self.side:
-            # Good players always track beliefs for evaluation metrics
-            self.belief_graph = BeliefGraph(owner=player_id, num_players=num_players)
-
-        self.chat_history: List[str] = []
         self.private_info: Dict[str, Any] = {}
+        self.memory: Optional[PlayerMemory] = None
+
+    # Set True by agents whose P(evil) comes from an LLM call in condition B.
+    llm_beliefs: bool = False
+
+    @property
+    def uses_graph(self) -> bool:
+        return self.condition in GRAPH_CONDITIONS
+
+    @property
+    def is_servant(self) -> bool:
+        return self.role == Role.LOYAL_SERVANT
 
     def set_private_info(self, info: Dict[str, Any]):
+        """Starts a fresh private memory for a new game."""
         self.private_info = info
-        if self.belief_graph and info.get("seen_evil"):
-            self.belief_graph.known_evil = set(info["seen_evil"])
-            for e in info["seen_evil"]:
-                self.belief_graph.set_p_evil(e, 1.0)
+        self.role = info["role"]
+        self.side = bool(info["side"])
+        belief_mode = "llm" if (self.llm_beliefs and self.condition == "belief_graph") else "rule"
+        self.memory = PlayerMemory(
+            self.player_id, info, self.num_players,
+            belief_mode=belief_mode,
+            merlin_graph=self.merlin_graph,
+        )
+
+    @property
+    def reads_talk(self) -> bool:
+        """Whether this player turns discussion into talk edges in its own graph."""
+        return (self.is_servant and self.uses_graph) or (not self.side and self.merlin_graph)
+
+    def merlin_guess(self) -> Optional[int]:
+        """The good player this evil player most suspects of being Merlin, if it keeps P(Merlin)."""
+        if self.memory is None or self.memory.merlin is None:
+            return None
+        return self.memory.merlin.top()
 
     def observe_event(self, event_type: str, data: Dict[str, Any]):
+        """Delivers a game event into this player's own observation log."""
+        if self.memory is not None:
+            self.memory.observe(event_type, data)
+
+    def record_own_quest_card(self, turn: int, passed: bool):
+        if self.memory is not None:
+            self.memory.record_quest_card(turn + 1, passed)
+
+    def _current_round_num(self) -> int:
+        """Engine round_num of the current proposal, from this player's own log."""
+        if self.memory is None or not self.memory.log:
+            return 0
+        return self.memory.log[-1].attempt - 1
+
+    def _record_reason(self, turn: int, round_num: int, action: str, reason: str):
+        if self.memory is not None:
+            self.memory.record_reason(turn + 1, round_num + 1, action, reason)
+
+    def suspicion(self, player: int) -> Optional[float]:
         """
-        Observes a game event (utterance, proposal, team vote, quest outcome).
-        Updates chat history and belief graph accordingly.
+        This player's own estimate that `player` is evil, or None if it has none.
+        Servants use their graph only in conditions B and C.
         """
-        if event_type == "utterance":
-            speaker = data["speaker"]
-            text = data["text"]
-            self.chat_history.append(f"Player {speaker}: \"{text}\"")
+        seen_evil = self.private_info.get("seen_evil", [])
+        if self.role == Role.MERLIN:
+            return 1.0 if player in seen_evil else 0.0
+        if self.memory is not None and self.memory.beliefs is not None and self.uses_graph:
+            return self.memory.beliefs.get(player)
+        return None
 
-        elif event_type == "team_proposed":
-            turn = data["turn"]
-            round_num = data["round_num"]
-            leader = data["leader"]
-            team = data["team"]
-            self.chat_history.append(f"[System] Quest {turn + 1}, Round {round_num + 1}: Player {leader} proposed team {team}.")
+    async def after_discussion(self, turn: int, round_num: int) -> None:
+        """Called after each discussion round, before the proposal. Own reasoning only."""
+        return None
 
-        elif event_type == "team_vote_result":
-            turn = data["turn"]
-            round_num = data["round_num"]
-            leader = data["leader"]
-            team = data["team"]
-            votes = data["votes"]
-            approved = data["approved"]
-            res_str = "APPROVED" if approved else "REJECTED"
-            vote_summary = ", ".join(f"P{p}:{'Y' if v else 'N'}" for p, v in votes.items())
-            self.chat_history.append(f"[System] Vote on team {team} was {res_str} ({vote_summary}).")
+    async def evil_discussion(self, turn: int) -> str:
+        """Evil-only talk before the assassination. Only the evil partner hears it."""
+        return ""
 
-            if self.belief_graph and self.condition in ("belief_graph", "rule_graph"):
-                self.belief_graph.update_deterministic_vote_rules(turn, round_num, leader, team, votes, approved)
-
-        elif event_type == "quest_result":
-            turn = data["turn"]
-            team = data["team"]
-            success = data["success"]
-            num_fails = data["num_fails"]
-            outcome_str = "SUCCEEDED" if success else f"FAILED with {num_fails} fail(s)"
-            self.chat_history.append(f"[System] Quest {turn + 1} {outcome_str}! Team was {team}.")
-
-            if self.belief_graph:
-                self.belief_graph.update_deterministic_quest_outcome(turn, team, num_fails, success)
+    async def final_beliefs(self) -> Optional[Dict[int, float]]:
+        """P(evil) at game end, for metrics. Only Loyal Servants report one."""
+        if self.memory is None or self.memory.beliefs is None:
+            return None
+        return dict(self.memory.beliefs.p_evil)
 
     @abstractmethod
     async def team_discussion(
@@ -139,19 +172,50 @@ class HeuristicAgent(Agent):
     Fast rule-based agent for validation and ablation baselines.
     """
 
-    async def team_discussion(self, turn: int, round_num: int, leader: int, team_size: int) -> str:
-        # Check if any quest has failed so far in the game
-        any_failed_quest = any("FAILED" in h for h in self.chat_history)
+    def _others_by_suspicion(self) -> List[int]:
+        """Other players, most suspicious first. Random order when this player has no estimate."""
+        others = [p for p in range(self.num_players) if p != self.player_id]
+        self.rng.shuffle(others)
+        if all(self.suspicion(p) is None for p in others):
+            return others
+        return sorted(others, key=lambda p: -(self.suspicion(p) or 0.0))
 
-        top_suspect = 0
-        safest_partner = (self.player_id + 1) % self.num_players
-        if self.belief_graph:
-            suspects = [p for p in self.belief_graph.get_top_suspects(self.num_players) if p != self.player_id]
-            if suspects:
-                top_suspect = suspects[0]
-            safest = [p for p in self.belief_graph.get_least_suspects(self.num_players) if p != self.player_id]
-            if safest:
-                safest_partner = safest[0]
+    async def after_discussion(self, turn: int, round_num: int) -> None:
+        """Reads the round's talk into this player's own graph with keyword rules."""
+        if not (self.reads_talk and self.memory is not None):
+            return
+        edges = []
+        for entry in self.memory.discussion_entries(turn + 1, round_num + 1):
+            if entry.speaker == self.player_id:
+                continue
+            lowered = entry.text.lower()
+            targets = {int(m) for m in _PLAYER_REF.findall(entry.text)} - {entry.speaker}
+            if not targets:
+                continue
+            if any(w in lowered for w in _ACCUSE_WORDS):
+                kind = "accused"
+            elif any(w in lowered for w in _DEFEND_WORDS):
+                kind = "defended"
+            else:
+                continue
+            for target in sorted(targets):
+                edges.append({"type": kind, "from": entry.speaker, "to": target, "sources": [entry.seq], "quote": entry.text})
+        self.memory.add_talk_edges(edges)
+
+    async def evil_discussion(self, turn: int) -> str:
+        guess = self.merlin_guess()
+        if guess is not None:
+            return f"Player {guess} has been too accurate all game. That's our Merlin."
+        seen_evil = self.private_info.get("seen_evil", [])
+        good = [p for p in range(self.num_players) if p not in seen_evil and p != self.player_id]
+        return f"My guess for Merlin is Player {self.rng.choice(good)}." if good else ""
+
+    async def team_discussion(self, turn: int, round_num: int, leader: int, team_size: int) -> str:
+        any_failed_quest = self.memory is not None and self.memory.any_failed_quest()
+
+        # most and least suspicious others from this player's own beliefs (random order without any)
+        ranked = self._others_by_suspicion()
+        top_suspect, safest_partner = ranked[0], ranked[-1]
 
         # Leader utterances
         if self.player_id == leader:
@@ -234,41 +298,42 @@ class HeuristicAgent(Agent):
 
         if self.side:
             # Good: pick least suspicious players
-            if self.belief_graph:
-                candidates = [(p, self.belief_graph.p_evil[p]) for p in range(self.num_players) if p != self.player_id]
-                candidates.sort(key=lambda x: x[1])  # lowest P(evil) first
-                for p, _ in candidates:
-                    if len(team) < team_size:
-                        team.append(p)
-            else:
-                others = [p for p in range(self.num_players) if p != self.player_id]
-                self.rng.shuffle(others)
-                team.extend(others[: team_size - 1])
+            safest_first = list(reversed(self._others_by_suspicion()))
+            team.extend(safest_first[: team_size - 1])
+            reason = "picked the players I suspect least"
         else:
-            # Evil: leader includes self and preferably one good player to blend in
+            # Evil: leader includes self and blends in with random others
             others = [p for p in range(self.num_players) if p != self.player_id]
             self.rng.shuffle(others)
             team.extend(others[: team_size - 1])
+            reason = "put myself on to control the outcome"
 
+        self._record_reason(turn, self._current_round_num(), "proposed", reason)
         return sorted(team)
 
     async def vote_on_team(self, turn: int, round_num: int, leader: int, team: List[int]) -> bool:
+        approve, reason = self._decide_team_vote(round_num, team)
+        self._record_reason(turn, round_num, "approved" if approve else "rejected", reason)
+        return approve
+
+    def _decide_team_vote(self, round_num: int, team: List[int]):
         # Hammer (round 4) auto-approves
         if round_num >= 4:
-            return True
+            return True, "hammer round auto-approves"
 
         if self.side:
-            # Good approves if self is on team or team has low suspicion
             if self.player_id in team:
-                return True
-            if self.belief_graph:
-                avg_suspicion = sum(self.belief_graph.p_evil[p] for p in team) / len(team)
-                return avg_suspicion < 0.45
-            return self.rng.random() > 0.40
-        else:
-            # Evil approves if at least one evil is on team
-            has_evil = any(p in self.private_info.get("seen_evil", []) or p == self.player_id for p in team)
-            return has_evil
+                return True, "I am on the team"
+            scores = [self.suspicion(p) for p in team]
+            if all(s is not None for s in scores):
+                avg_suspicion = sum(scores) / len(team)
+                return avg_suspicion < 0.45, f"average suspicion {avg_suspicion:.2f}"
+            approve = self.rng.random() > 0.40
+            return approve, "no strong read yet"
+
+        # Evil approves if at least one evil is on team
+        has_evil = any(p in self.private_info.get("seen_evil", []) or p == self.player_id for p in team)
+        return has_evil, "an evil player is on it" if has_evil else "no evil player on it"
 
     async def vote_on_quest(self, turn: int, team: List[int]) -> bool:
         if self.side:
@@ -279,6 +344,9 @@ class HeuristicAgent(Agent):
         return False
 
     async def assassinate(self) -> int:
+        guess = self.merlin_guess()
+        if guess is not None:
+            return guess
         good_players = [p for p in range(self.num_players) if p not in self.private_info.get("seen_evil", []) and p != self.player_id]
         if not good_players:
             return 0
