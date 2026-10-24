@@ -37,6 +37,17 @@ Personality:
 - Never use markdown formatting, bullet points, or emojis in spoken discussion.
 """
 
+# Opt-in Merlin strategy (`merlin_strategy: hidden`): the Assassin reads Merlin from accusations that
+# land too accurately, so steer quietly and only say what a servant could also have worked out.
+MERLIN_HIDDEN_RULES = """
+How you play Merlin (the Assassin is watching who reads evil correctly):
+- Only argue from public evidence anyone could cite: failed quests, team members, votes. Never from what you saw.
+- Never be the first or the most confident to accuse someone. Echo a servant's suspicion instead of leading.
+- Steer mostly with your votes. When you speak, sound as uncertain as a servant would.
+- Now and then voice mild doubt about a good player, and don't defend a good player too eagerly.
+- If a servant is already pushing the right read, let them carry it.
+"""
+
 EXTRACTION_PROMPT = """Discussion round {label} just ended. Record what you heard into your private memory by calling record_observations.
 
 This round's lines:
@@ -78,6 +89,7 @@ class LLMAgent(Agent):
         temperature: float = 0.7,
         seed: Optional[int] = None,
         merlin_graph: bool = False,
+        merlin_strategy: str = "default",  # "hidden": Merlin also gets MERLIN_HIDDEN_RULES
     ):
         super().__init__(player_id, role, num_players, condition, seed, merlin_graph=merlin_graph)
         # Unset arguments come from the standard OpenAI variables, so a local .env can route every
@@ -86,6 +98,7 @@ class LLMAgent(Agent):
         self.api_key = api_key or os.getenv("OPENAI_API_KEY") or os.getenv("BOSON_API_KEY", "")
         self.base_url = (base_url or os.getenv("OPENAI_BASE_URL") or "https://api.openai.com/v1").rstrip("/")
         self.temperature = temperature
+        self.merlin_strategy = merlin_strategy
 
     @property
     def _offers_recall(self) -> bool:
@@ -95,12 +108,15 @@ class LLMAgent(Agent):
         seen_evil = self.private_info.get("seen_evil", [])
         seen_evil_str = f"Player(s) {seen_evil}" if seen_evil else "none"
 
-        return SYSTEM_PROMPT_TEMPLATE.format(
+        prompt = SYSTEM_PROMPT_TEMPLATE.format(
             player_id=self.player_id,
             role_name=ROLE_NAMES[self.role],
             side_name="Good" if self.side else "Evil",
             seen_evil_str=seen_evil_str,
         )
+        if self.role == Role.MERLIN and self.merlin_strategy == "hidden":
+            prompt += MERLIN_HIDDEN_RULES
+        return prompt
 
     def _memory_context(self) -> str:
         m = self.memory

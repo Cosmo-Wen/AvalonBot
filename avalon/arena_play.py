@@ -158,7 +158,8 @@ def build_agents(setup: GameSetup, cfg: ArenaConfig, log: EventLog) -> Dict[int,
             agents[seat] = LoggedLLMAgent(player_id=seat, role=role, condition=condition, model=spec.model,
                                           seed=seed, log=log, max_inflight=cfg.max_inflight_requests,
                                           max_retries=cfg.llm_max_retries, backoff_base_s=cfg.backoff_base_s,
-                                          backoff_max_s=cfg.backoff_max_s, request_timeout_s=cfg.llm_timeout_s)
+                                          backoff_max_s=cfg.backoff_max_s, request_timeout_s=cfg.llm_timeout_s,
+                                          merlin_strategy=cfg.merlin_strategy)
         else:
             raise FatalBackendError(
                 f"provider {spec.provider!r} isn't supported for AvalonBot games: LLMAgent needs an "
@@ -210,6 +211,7 @@ async def play_game(setup: GameSetup, cfg: ArenaConfig, log: EventLog) -> Dict[s
         seed=setup.seed,
         config_hash=cfg.config_hash(),
         condition=cfg.condition,
+        merlin_strategy=cfg.merlin_strategy,
         quest_leader=setup.quest_leader,
         seats=[
             {"seat": i, "participant": setup.seat_participants[i], "name": spec.name, "agent": spec.agent,

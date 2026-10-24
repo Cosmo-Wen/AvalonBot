@@ -1,0 +1,26 @@
+# AvalonBot ablation, condition: rule_graph with a hidden Merlin (merlin_strategy: hidden). Every seat on gpt-6.1-sol via an OpenAI-compatible endpoint
+# (OPENAI_BASE_URL / OPENAI_API_KEY from .env). The good team plays rule_graph; evil always plays chat_only.
+# Same base_seed in every condition, so game i has the same deal in each: one pair per game index.
+#   python -m arena check --config configs/arena/sol_rule_graph_hidden.yaml
+#   python -m arena run   --config configs/arena/sol_rule_graph_hidden.yaml --run-dir runs/sol/rule_graph_hidden
+
+seats:
+  - {provider: openai, model: gpt-6.1-sol}
+  - {provider: openai, model: gpt-6.1-sol}
+  - {provider: openai, model: gpt-6.1-sol}
+  - {provider: openai, model: gpt-6.1-sol}
+  - {provider: openai, model: gpt-6.1-sol}
+roles: [Merlin, Servant, Servant, Assassin, Minion]
+condition: rule_graph
+merlin_strategy: hidden  # Merlin gets avalon.llm_agent.MERLIN_HIDDEN_RULES; everyone else as in C
+
+num_games: 40         # pairs per condition: ~4 h for A+B+C at the measured ~33 calls/min (README, Batch runs)
+base_seed: 0
+shuffle_roles: true
+shuffle_seats: false  # every seat plays the same model
+random_leader: true
+
+concurrency: 8        # games in parallel
+max_inflight_requests: 6  # Boson's gateway rejects >~6-12 concurrent requests per key (429)
+max_game_retries: 0   # metered key: don't replay a failed game (re-run resumes it instead)
+llm_timeout_s: 180
