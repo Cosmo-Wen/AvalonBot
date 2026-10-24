@@ -32,13 +32,14 @@ except ImportError:
     HAS_WINSOUND = False
 
 
+# Same pairing as server/audio_proxy.py: one male voice for James, female voices for Claire and Emma.
 DEFAULT_SEAT_VOICES: Dict[int, str] = {
-    -1: os.getenv("BOSON_VOICE_NARRATOR", "nora"), # Narrator: clear, cinematic female storyteller
-    0: os.getenv("BOSON_VOICE_0", "marcus"),   # Minion: deep authoritative male
-    1: os.getenv("BOSON_VOICE_1", "eleanor"),  # Loyal Servant 1: articulate poised female
-    2: os.getenv("BOSON_VOICE_2", "jake"),     # Loyal Servant 2: high-energy reactive male
-    3: os.getenv("BOSON_VOICE_3", "oliver"),   # Assassin: calm strategic male
-    4: os.getenv("BOSON_VOICE_4", "chloe"),    # Merlin: warm guidance female
+    -1: os.getenv("BOSON_VOICE_NARRATOR", "nora"),
+    0: os.getenv("BOSON_VOICE_0", "marcus"),
+    1: os.getenv("BOSON_VOICE_1", "eleanor"),
+    2: os.getenv("BOSON_VOICE_2", "nora"),
+    3: os.getenv("BOSON_VOICE_3", "eleanor"),
+    4: os.getenv("BOSON_VOICE_4", "chloe"),
 }
 
 # Verified Boson Higgs Control Tag Profiles per seat:

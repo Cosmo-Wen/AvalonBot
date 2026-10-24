@@ -251,6 +251,8 @@ export default function App() {
                 proposal={gameState.currentProposal}
                 showRoles={showRoles}
                 seatVideos={livekit.seatVideos}
+                seatAudio={livekit.seatAudio}
+                muted={livekit.muted}
                 levels={levels}
               >
                 <VoteOverlay events={gameState.events} />

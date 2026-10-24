@@ -19,32 +19,34 @@ export function useLiveKit() {
   const [status, setStatus] = useState<AvatarStatus>("checking");
   const [message, setMessage] = useState<string>("");
   const [seatVideos, setSeatVideos] = useState<Record<number, RemoteTrack>>({});
+  const [seatAudio, setSeatAudio] = useState<Record<number, RemoteTrack>>({});
   const [levels, setLevels] = useState<Record<number, number>>({});
   const roomRef = useRef<Room | null>(null);
-  const audioEls = useRef<Map<string, HTMLMediaElement>>(new Map());
-  const mutedRef = useRef(false);
+  const [muted, setMutedState] = useState(false);
 
   const refresh = useCallback(() => {
     const room = roomRef.current;
     if (!room) return;
     const videos: Record<number, RemoteTrack> = {};
+    const audios: Record<number, RemoteTrack> = {};
     room.remoteParticipants.forEach((p: RemoteParticipant) => {
       const seat = seatOf(p.identity);
       if (seat === null) return;
       p.trackPublications.forEach((pub: RemoteTrackPublication) => {
-        if (pub.kind !== Track.Kind.Video) return;
-        // LiveKit pauses a video track that was never attached to an element, so subscribe
-        // explicitly and let the seat attach it.
         if (!pub.isSubscribed) pub.setSubscribed(true);
-        if (pub.track) videos[seat] = pub.track;
+        if (!pub.track) return;
+        if (pub.kind === Track.Kind.Video) videos[seat] = pub.track;
+        if (pub.kind === Track.Kind.Audio) audios[seat] = pub.track;
       });
     });
-    setSeatVideos((prev) => {
+    const keep = (prev: Record<number, RemoteTrack>, next: Record<number, RemoteTrack>) => {
       const same =
-        Object.keys(prev).length === Object.keys(videos).length &&
-        Object.entries(videos).every(([seat, track]) => prev[Number(seat)] === track);
-      return same ? prev : videos;
-    });
+        Object.keys(prev).length === Object.keys(next).length &&
+        Object.entries(next).every(([seat, track]) => prev[Number(seat)] === track);
+      return same ? prev : next;
+    };
+    setSeatVideos((prev) => keep(prev, videos));
+    setSeatAudio((prev) => keep(prev, audios));
   }, []);
 
   const connect = useCallback(async () => {
@@ -57,23 +59,8 @@ export function useLiveKit() {
     const room = new Room();
     roomRef.current = room;
     room
-      .on(RoomEvent.TrackSubscribed, (track: RemoteTrack) => {
-        if (track.kind === Track.Kind.Audio) {
-          const el = track.attach();
-          el.muted = mutedRef.current;
-          el.style.display = "none";
-          document.body.appendChild(el);
-          audioEls.current.set(track.sid ?? String(Math.random()), el);
-        }
-        refresh();
-      })
-      .on(RoomEvent.TrackUnsubscribed, (track: RemoteTrack) => {
-        if (track.kind === Track.Kind.Audio) {
-          track.detach().forEach((el) => el.remove());
-          if (track.sid) audioEls.current.delete(track.sid);
-        }
-        refresh();
-      })
+      .on(RoomEvent.TrackSubscribed, () => refresh())
+      .on(RoomEvent.TrackUnsubscribed, () => refresh())
       .on(RoomEvent.TrackPublished, refresh)
       .on(RoomEvent.ParticipantConnected, refresh)
       .on(RoomEvent.ParticipantDisconnected, refresh)
@@ -89,6 +76,7 @@ export function useLiveKit() {
         if (roomRef.current !== room) return;
         roomRef.current = null;
         setSeatVideos({});
+        setSeatAudio({});
         setStatus("idle");
       });
 
@@ -129,7 +117,6 @@ export function useLiveKit() {
   useEffect(
     () => () => {
       roomRef.current?.disconnect();
-      audioEls.current.forEach((el) => el.remove());
     },
     []
   );
@@ -161,14 +148,12 @@ export function useLiveKit() {
     roomRef.current?.disconnect();
     roomRef.current = null;
     setSeatVideos({});
+    setSeatAudio({});
     await fetch("/api/avatar/release", { method: "DELETE" }).catch(() => undefined);
     setStatus("idle");
   }, []);
 
-  const setMuted = useCallback((muted: boolean) => {
-    mutedRef.current = muted;
-    audioEls.current.forEach((el) => (el.muted = muted));
-  }, []);
+  const setMuted = useCallback((next: boolean) => setMutedState(next), []);
 
-  return { status, message, seatVideos, levels, start, stop, setMuted };
+  return { status, message, seatVideos, seatAudio, levels, muted, start, stop, setMuted };
 }

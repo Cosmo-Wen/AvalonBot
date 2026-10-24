@@ -1,3 +1,4 @@
+import { useEffect, useState } from "react";
 import { type GameEvent, SEAT_COLORS, seatName } from "../types";
 
 interface VoteOverlayProps {
@@ -32,9 +33,20 @@ function TeamChips({ team }: { team: number[] }) {
   );
 }
 
+const STAYS_UP = new Set(["game_over", "team_proposed"]);
+
 export default function VoteOverlay({ events }: VoteOverlayProps) {
   const last = [...events].reverse().find((e) => e.type !== "utterance" && e.type !== "evil_chat");
-  if (!last) return null;
+  const [hiddenSeq, setHiddenSeq] = useState<number | null>(null);
+
+  useEffect(() => {
+    if (!last || STAYS_UP.has(last.type)) return;
+    const seq = last.seq;
+    const timer = setTimeout(() => setHiddenSeq(seq), 4000);
+    return () => clearTimeout(timer);
+  }, [last?.seq, last?.type]);
+
+  if (!last || last.seq === hiddenSeq) return null;
   return <div key={last.seq} className="contents">{renderEvent(last)}</div>;
 }
 

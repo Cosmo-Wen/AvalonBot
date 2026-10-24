@@ -9,6 +9,8 @@ interface PlayerAvatarProps {
   vote?: boolean;
   showRole: boolean;
   videoTrack?: RemoteTrack | null;
+  audioTrack?: RemoteTrack | null;
+  muted?: boolean;
   level: number;
   width: number;
 }
@@ -20,18 +22,22 @@ const ROLE_ICON: Record<string, string> = {
   loyal_servant: "/roles/good-icon.webp",
 };
 
-function AvatarVideo({ track }: { track: RemoteTrack }) {
+function AvatarVideo({ video, audio, muted }: { video: RemoteTrack; audio?: RemoteTrack | null; muted: boolean }) {
   const ref = useRef<HTMLVideoElement>(null);
   useEffect(() => {
     const el = ref.current;
     if (!el) return;
-    // attach() is required: LiveKit will not send frames to a track that has no element.
-    track.attach(el);
+    // Both tracks go on one element so the mouth and the voice share a clock.
+    video.attach(el);
+    audio?.attach(el);
+    el.muted = muted;
+    el.play().catch(() => undefined);
     return () => {
-      track.detach(el);
+      video.detach(el);
+      audio?.detach(el);
     };
-  }, [track]);
-  return <video ref={ref} autoPlay playsInline muted className="absolute inset-0 h-full w-full object-cover object-top" />;
+  }, [video, audio, muted]);
+  return <video ref={ref} autoPlay playsInline className="absolute inset-0 h-full w-full object-cover object-top" />;
 }
 
 function Emblem({ seat }: { seat: number }) {
@@ -49,7 +55,7 @@ function Emblem({ seat }: { seat: number }) {
   );
 }
 
-export default function PlayerAvatar({ player, isLeader, isOnTeam, vote, showRole, videoTrack, level, width }: PlayerAvatarProps) {
+export default function PlayerAvatar({ player, isLeader, isOnTeam, vote, showRole, videoTrack, audioTrack, muted = false, level, width }: PlayerAvatarProps) {
   const color = SEAT_COLORS[player.seat];
   const speaking = player.isSpeaking || level > 0.05;
   const height = Math.round(width * 1.25);
@@ -69,7 +75,7 @@ export default function PlayerAvatar({ player, isLeader, isOnTeam, vote, showRol
         }}
       >
         <div className="relative h-full w-full overflow-hidden rounded-[0.8rem] bg-medieval-surface">
-          {videoTrack ? <AvatarVideo track={videoTrack} /> : <Emblem seat={player.seat} />}
+          {videoTrack ? <AvatarVideo video={videoTrack} audio={audioTrack} muted={muted} /> : <Emblem seat={player.seat} />}
           <div className="pointer-events-none absolute inset-x-0 bottom-0 h-1/3 bg-gradient-to-t from-black/70 to-transparent" />
           {speaking && (
             <div className="absolute bottom-1.5 left-1/2 flex -translate-x-1/2 items-end gap-[2px]">

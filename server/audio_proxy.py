@@ -20,13 +20,15 @@ TTS_URL = "https://api.boson.ai/v1/audio/speech"
 CLIENT_SECRETS_URL = "https://api.boson.ai/v1/realtime/client_secrets"
 REALTIME_WS_URL = "wss://api.boson.ai/v1/realtime/"
 
+# Voices follow the face at that seat. Boson only has one male face (James), so Atlas is
+# the male voice. Emma and Claire are women, including Griffin and Phoenix.
 DEFAULT_VOICES = {
     -1: os.getenv("BOSON_VOICE_NARRATOR", "nora"),
-    0: os.getenv("BOSON_VOICE_0", "marcus"),
-    1: os.getenv("BOSON_VOICE_1", "eleanor"),
-    2: os.getenv("BOSON_VOICE_2", "jake"),
-    3: os.getenv("BOSON_VOICE_3", "oliver"),
-    4: os.getenv("BOSON_VOICE_4", "chloe"),
+    0: os.getenv("BOSON_VOICE_0", "marcus"),    # James
+    1: os.getenv("BOSON_VOICE_1", "eleanor"),   # Claire
+    2: os.getenv("BOSON_VOICE_2", "nora"),      # Emma
+    3: os.getenv("BOSON_VOICE_3", "eleanor"),   # Claire, slower than Lyra
+    4: os.getenv("BOSON_VOICE_4", "chloe"),     # Emma
 }
 
 SEAT_PROFILES = {

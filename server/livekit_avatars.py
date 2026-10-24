@@ -12,6 +12,7 @@ Without them, `is_available` is False and the frontend falls back to portraits p
 
 import asyncio
 import io
+import json
 try:
     import audioop
 except ImportError:
@@ -19,6 +20,7 @@ except ImportError:
 import os
 import wave
 from datetime import timedelta
+from pathlib import Path
 from typing import Dict, List, Optional
 
 import aiohttp
@@ -44,6 +46,7 @@ FRAME_MS = 20
 MAX_DURATION_SECONDS = 3600
 PLAYOUT_TIMEOUT = 60.0
 CREATE_ATTEMPTS = 5
+SESSION_FILE = Path(__file__).with_name("avatar_sessions.json")
 
 # Boson's presets (GET /v1/avatars). Override per seat with BOSON_AVATAR_<seat>.
 PRESET_AVATARS = [
@@ -177,6 +180,36 @@ class AvatarManager:
         print(f"[avatar] seat {seat}: {self.errors[seat]}")
         return None
 
+    def _remember(self) -> None:
+        """Session ids survive a server reload, so the next process can release them."""
+        saved = {str(seat): a.session_id for seat, a in self.seats.items() if a.session_id.startswith("avrt_")}
+        SESSION_FILE.write_text(json.dumps(saved))
+
+    async def _delete_session(self, http: aiohttp.ClientSession, session_id: str) -> None:
+        if not session_id.startswith("avrt_"):
+            return
+        try:
+            await http.delete(f"{BOSON_BASE_URL}/avatar/sessions/{session_id}",
+                              headers={"Authorization": f"Bearer {BOSON_API_KEY}"})
+        except Exception:
+            pass
+
+    async def _seats_in_room(self) -> set:
+        """Seats whose avatar is already publishing in the room, even after a restart forgot them."""
+        lk = lk_api.LiveKitAPI(LIVEKIT_URL.replace("wss://", "https://").replace("ws://", "http://"),
+                               LIVEKIT_API_KEY, LIVEKIT_API_SECRET)
+        try:
+            parts = await lk.room.list_participants(lk_api.ListParticipantsRequest(room=self.room_name))
+        except Exception:
+            return set()
+        finally:
+            await lk.aclose()
+        seats = set()
+        for p in parts.participants:
+            if p.identity.startswith("avatar-seat-") and p.identity.rsplit("-", 1)[-1].isdigit():
+                seats.add(int(p.identity.rsplit("-", 1)[-1]))
+        return seats
+
     async def _connect_voice(self, avatar: SeatAvatar) -> None:
         room = rtc.Room()
         await room.connect(LIVEKIT_URL, self._token(voice_identity(avatar.seat), publish=True, subscribe=True))
@@ -193,6 +226,22 @@ class AvatarManager:
         if not self.is_available:
             return {}
         async with self._lock:
+            # A reload used to forget the running sessions and then fail to make new ones,
+            # because Boson was still full. Take the ones already in the room back over.
+            for seat in await self._seats_in_room():
+                if seat in self.seats:
+                    continue
+                avatar = SeatAvatar(seat, "")
+                self.seats[seat] = avatar
+                try:
+                    await self._connect_voice(avatar)
+                    self.errors.pop(seat, None)
+                    print(f"[avatar] seat {seat}: reconnected voice to the running avatar")
+                except Exception as exc:
+                    self.seats.pop(seat, None)
+                    self.errors[seat] = f"voice connect error: {exc}"
+                    print(f"[avatar] seat {seat}: {self.errors[seat]}")
+
             missing = [s for s in range(5) if s not in self.seats]
             # One at a time: parallel creates hit Boson's rate limit
             async with aiohttp.ClientSession() as http:
@@ -202,11 +251,13 @@ class AvatarManager:
                         continue
                     self.seats[seat] = avatar
                     self.errors.pop(seat, None)
+                    self._remember()
                     try:
                         await self._connect_voice(avatar)
                     except Exception as exc:
                         self.errors[seat] = f"voice connect error: {exc}"
                         print(f"[avatar] seat {seat}: {self.errors[seat]}")
+            self._remember()
             return dict(self.seats)
 
     async def speak(self, seat: int, wav_bytes: bytes) -> bool:
@@ -226,18 +277,25 @@ class AvatarManager:
             print(f"[avatar] seat {seat}: no playback_finished within {PLAYOUT_TIMEOUT}s")
         return True
 
+    async def detach_voices(self) -> None:
+        """Drops our voice connections but leaves the avatars in the room, so a restart can resume them."""
+        async with self._lock:
+            for avatar in self.seats.values():
+                if avatar.room is not None:
+                    await avatar.room.disconnect()
+                    avatar.room = None
+                    avatar.output = None
+            self.seats.clear()
+
     async def release_all(self) -> None:
         async with self._lock:
-            headers = {"Authorization": f"Bearer {BOSON_API_KEY}"}
             async with aiohttp.ClientSession() as http:
                 for avatar in self.seats.values():
-                    try:
-                        await http.delete(f"{BOSON_BASE_URL}/avatar/sessions/{avatar.session_id}", headers=headers)
-                    except Exception:
-                        pass
+                    await self._delete_session(http, avatar.session_id)
                     if avatar.room is not None:
                         await avatar.room.disconnect()
             self.seats.clear()
+            self._remember()
 
     def get_room_info(self) -> Dict:
         return {

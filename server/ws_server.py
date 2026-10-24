@@ -53,7 +53,7 @@ avatar_manager = AvatarManager()
 @contextlib.asynccontextmanager
 async def lifespan(_app: FastAPI):
     yield
-    await avatar_manager.release_all()
+    await avatar_manager.detach_voices()
 
 
 app = FastAPI(title="AvalonBot Spectator Server", lifespan=lifespan)
