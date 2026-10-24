@@ -7,6 +7,7 @@ import PhaseIndicator from "./components/PhaseIndicator";
 import GameControls from "./components/GameControls";
 import KnowledgeGraphView from "./components/KnowledgeGraphView";
 import { BeliefPanel } from "./components/BeliefPanel";
+import HumanActionModal from "./components/HumanActionModal";
 import { useGameSocket } from "./hooks/useGameSocket";
 import { useAudio } from "./hooks/useAudio";
 import { useLiveKit, type AvatarStatus } from "./hooks/useLiveKit";
@@ -55,7 +56,7 @@ export default function App() {
 
   const audio = useAudio();
   const livekit = useLiveKit();
-  const { gameState, isConnected, startGame, pause, resume, step, setSpeed, setVoice, availableGames } =
+  const { gameState, isConnected, startGame, sendHumanAction, pause, resume, step, setSpeed, setVoice, availableGames } =
     useGameSocket("/ws/game", audio.playAudio);
 
   const levels = useMemo(() => ({ ...audio.levels, ...livekit.levels }), [audio.levels, livekit.levels]);
@@ -101,9 +102,9 @@ export default function App() {
   }, [playing, pause, resume]);
 
   const begin = useCallback(
-    (mode: "live" | "replay", file?: string) => {
+    (mode: "live" | "replay", file?: string, humanSeat?: number | null) => {
       audio.unlock();
-      startGame(mode, file);
+      startGame(mode, file, humanSeat);
       setSpeed(speed);
       setVoice(voiceOn);
       setIsPlaying(true);
@@ -184,6 +185,23 @@ export default function App() {
               Retry seats
             </TopButton>
           )}
+          {gameState.humanRole && (
+            <div className="flex items-center gap-2 rounded-full border border-medieval-gold/40 bg-medieval-gold/10 px-3.5 py-1 text-xs">
+              <span className="font-display font-semibold text-medieval-gold">
+                👑 Secret Identity: {gameState.humanRole.role} ({gameState.humanRole.side === "good" ? "Good" : "Evil"})
+              </span>
+              {gameState.humanRole.seenPlayers?.length > 0 && (
+                <span className="font-mono text-[10px] text-medieval-silver/80">
+                  Seen Evil: {gameState.humanRole.seenPlayers.map(seatName).join(", ")}
+                </span>
+              )}
+              {gameState.humanRole.evilPlayers?.length > 0 && (
+                <span className="font-mono text-[10px] text-medieval-silver/80">
+                  Coven: {gameState.humanRole.evilPlayers.filter((s) => s !== gameState.humanSeat).map(seatName).join(", ")}
+                </span>
+              )}
+            </div>
+          )}
           <TopButton onClick={() => setShowRoles(!showRoles)} active={showRoles} disabled={!gameState.rolesKnown} title="Spectators only: the players never see this">
             {showRoles ? "Hide roles" : "Reveal roles"}
           </TopButton>
@@ -205,6 +223,14 @@ export default function App() {
             </div>
           )}
         </div>
+      )}
+
+      {/* Interactive Human Action Modal for Proposals, Votes, Secret Quest Cards, & Assassination */}
+      {gameState.humanPrompt && (
+        <HumanActionModal
+          prompt={gameState.humanPrompt}
+          onRespond={sendHumanAction}
+        />
       )}
 
       <main
@@ -257,7 +283,7 @@ export default function App() {
           setVoiceOn(!voiceOn);
           setVoice(!voiceOn);
         }}
-        onNewGame={() => begin("live")}
+        onNewGame={(humanSeat) => begin("live", undefined, humanSeat)}
         onLoadReplay={(file) => begin("replay", file)}
         status={status}
         availableReplays={availableGames}

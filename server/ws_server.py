@@ -43,6 +43,7 @@ from avalon.runner import AvalonGameRunner  # noqa: E402
 from server.audio_proxy import BOSON_API_KEY, get_tts_audio  # noqa: E402
 from server.livekit_avatars import AvatarManager  # noqa: E402
 from server.memory_view import serialize_memories  # noqa: E402
+from server.human_web_agent import HumanWebAgent  # noqa: E402
 
 GAME_PATTERNS = ["runs/**/games/game_*.jsonl", "experiments/**/games/game_*.jsonl"]
 
@@ -142,6 +143,12 @@ class GameSession:
         self.wake = asyncio.Event()
         self.task: Optional[asyncio.Task] = None
         self.closed = False
+        self.human_seat: Optional[int] = None
+        self.human_agent: Optional[HumanWebAgent] = None
+
+    def resolve_human_action(self, action: str, data: Dict[str, Any]) -> None:
+        if self.human_agent:
+            self.human_agent.resolve_action(action, data)
 
     async def send(self, type_: str, data: Dict[str, Any], seq: int = 0) -> None:
         if self.closed:
@@ -216,7 +223,10 @@ async def game_ws(ws: WebSocket):
                 if msg.get("mode") == "replay":
                     session.start(run_replay(session, msg.get("replay_file") or ""))
                 else:
-                    session.start(run_live_game(session))
+                    human_seat = msg.get("human_seat")
+                    session.start(run_live_game(session, human_seat=human_seat))
+            elif kind == "human_action_response":
+                session.resolve_human_action(msg.get("action", ""), msg.get("data", {}))
             elif kind == "stop":
                 if session.task is not None:
                     session.task.cancel()
@@ -306,11 +316,16 @@ async def run_replay(session: GameSession, replay_file: str) -> None:
 
 # ── Live ─────────────────────────────────────────────────────────────
 
-async def run_live_game(session: GameSession) -> None:
-    agents = {
-        i: HeuristicAgent(i, Role.LOYAL_SERVANT, condition="rule_graph", seed=None, merlin_graph=True)
-        for i in range(5)
-    }
+async def run_live_game(session: GameSession, human_seat: Optional[int] = None) -> None:
+    session.human_seat = human_seat
+    agents: Dict[int, Any] = {}
+    for i in range(5):
+        if human_seat is not None and i == human_seat:
+            session.human_agent = HumanWebAgent(i, session=session, role=Role.LOYAL_SERVANT)
+            agents[i] = session.human_agent
+        else:
+            agents[i] = HeuristicAgent(i, Role.LOYAL_SERVANT, condition="rule_graph", seed=None, merlin_graph=True)
+
     runner: Optional[AvalonGameRunner] = None
     started = False
 
@@ -320,11 +335,11 @@ async def run_live_game(session: GameSession) -> None:
             return
         started = True
         engine = runner.engine
-        await session.send("game_start", {"mode": "live", "leader": engine.leader})
+        await session.send("game_start", {"mode": "live", "leader": engine.leader, "human_seat": human_seat})
         await session.send("role_reveal", roles_payload(engine.player_roles, engine.player_sides))
 
     def memories():
-        return {p: a.memory for p, a in agents.items() if a.memory is not None}
+        return {p: a.memory for p, a in agents.items() if getattr(a, "memory", None) is not None}
 
     async def on_event(event_type: str, data: Dict[str, Any], recipients: List[int]) -> None:
         await announce_start()
@@ -332,7 +347,9 @@ async def run_live_game(session: GameSession) -> None:
         seq = int(data.pop("seq", 0))
         if event_type in ("utterance", "evil_chat"):
             await session.send(event_type, data, seq)
-            await session.speak(data["speaker"], data["text"], seq)
+            # Only synthesize voice if speaker is not the human player
+            if human_seat is None or data.get("speaker") != human_seat:
+                await session.speak(data["speaker"], data["text"], seq)
         elif event_type in ("team_proposed", "team_vote_result", "quest_result"):
             data["votes"] = {str(p): v for p, v in data.get("votes", {}).items()}
             await session.send(event_type, data, seq)

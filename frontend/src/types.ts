@@ -99,6 +99,27 @@ export interface BeliefSnapshot {
   values: Record<number, number>;
 }
 
+export interface HumanRoleInfo {
+  seat: number;
+  role: string;
+  side: "good" | "evil";
+  seenPlayers: number[];
+  evilPlayers: number[];
+}
+
+export interface HumanActionPrompt {
+  action: "discussion" | "propose_team" | "vote_on_team" | "vote_on_quest" | "evil_discussion" | "assassinate";
+  seat: number;
+  turn?: number;
+  roundNum?: number;
+  leader?: number;
+  team?: number[];
+  teamSize?: number;
+  canFail?: boolean;
+  side?: "good" | "evil";
+  candidates?: number[];
+}
+
 export interface GameState {
   mode: "live" | "replay" | null;
   phase: GamePhase;
@@ -116,6 +137,9 @@ export interface GameState {
   violations: string[];
   error: string | null;
   finished: boolean;
+  humanSeat: number | null;
+  humanRole: HumanRoleInfo | null;
+  humanPrompt: HumanActionPrompt | null;
 }
 
 export const ROLE_DISPLAY: Record<PlayerRole, string> = {

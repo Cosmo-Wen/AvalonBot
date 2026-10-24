@@ -586,37 +586,23 @@ class HumanVoiceAgent(Agent):
             return True
 
         # Evil players can choose Pass or Fail
-        print("  🗡️ As an Evil player, choose to PASS (support quest) or FAIL (sabotage quest).")
+        # In Avalon, quest votes are strictly secret cards, so this is entered silently via keyboard
+        print("  🗡️ As an Evil player, choose secretly: PASS (support quest) or FAIL (sabotage quest).")
+        print("  🤫 [SECRET INPUT] Do not speak aloud. Enter your secret card choice below:")
 
-        # 1. Voice attempt if mic enabled
-        if self.use_mic and self.api_key:
-            print("  🎤 Speak your secret quest card ('Pass' or 'Fail')...")
-            transcript = await self._capture_and_transcribe(min(3.0, self.mic_duration))
-            if transcript:
-                print(f"  🗣️ [Transcribed via Boson STT]: \"{transcript}\"")
-                parsed = parse_spoken_quest_vote(transcript)
-                if parsed is not None:
-                    choice = "PASS" if parsed else "FAIL (Sabotage)"
-                    print(f"  ✅ [Secret Vote Accepted]: {choice}")
-                    return parsed
-                print("  ⚠️ Quest vote not clearly recognized as Pass or Fail.")
-            else:
-                print("  ⚠️ Voice unrecognized or empty.")
-
-        # 2. Interactive keyboard console fallback
         loop = asyncio.get_running_loop()
         while True:
             text = await loop.run_in_executor(
                 None,
                 input,
-                "Secret Quest Card - Pass (p) or Fail (f): ",
+                "  Secret Quest Card - Pass (p) or Fail (f): ",
             )
             parsed = parse_spoken_quest_vote(text)
             if parsed is not None:
                 choice = "PASS" if parsed else "FAIL (Sabotage)"
-                print(f"  ✅ [Secret Vote Accepted]: {choice}")
+                print(f"  ✅ [Secret Card Recorded]: {choice}")
                 return parsed
-            print("  ❌ Please enter 'p' / 'pass' to Pass, or 'f' / 'fail' to Fail.")
+            print("  ❌ Please enter 'p' to Pass, or 'f' to Fail.")
 
     async def evil_discussion(self, turn: int) -> str:
         print(f"\n[EVIL SECRET DISCUSSION - Player {self.player_id}] Coordinate privately with your evil partner:")

@@ -39,6 +39,9 @@ const INITIAL_STATE: GameState = {
   violations: [],
   error: null,
   finished: false,
+  humanSeat: null,
+  humanRole: null,
+  humanPrompt: null,
 };
 
 type Action =
@@ -68,6 +71,7 @@ function reduceMessage(state: GameState, type: string, seq: number, d: Data): Ga
         mode: (d.mode as "live" | "replay") ?? null,
         phase: "team_selection",
         leader: (d.leader as number) ?? 0,
+        humanSeat: (d.human_seat as number | null) ?? null,
       };
 
     case "role_reveal": {
@@ -217,6 +221,41 @@ function reduceMessage(state: GameState, type: string, seq: number, d: Data): Ga
       return { ...state, memory, beliefHistory };
     }
 
+    case "human_role": {
+      return {
+        ...state,
+        humanSeat: (d.seat as number) ?? state.humanSeat,
+        humanRole: {
+          seat: (d.seat as number) ?? 0,
+          role: (d.role as string) ?? "",
+          side: String(d.side ?? "good").toLowerCase() as "good" | "evil",
+          seenPlayers: (d.seen_players as number[]) ?? [],
+          evilPlayers: (d.evil_players as number[]) ?? [],
+        },
+      };
+    }
+
+    case "human_prompt": {
+      return {
+        ...state,
+        humanPrompt: {
+          action: (d.action as any) ?? "discussion",
+          seat: (d.seat as number) ?? 0,
+          turn: d.turn as number | undefined,
+          roundNum: d.round_num as number | undefined,
+          leader: d.leader as number | undefined,
+          team: d.team as number[] | undefined,
+          teamSize: d.team_size as number | undefined,
+          canFail: d.can_fail as boolean | undefined,
+          side: d.side as "good" | "evil" | undefined,
+          candidates: d.candidates as number[] | undefined,
+        },
+      };
+    }
+
+    case "human_prompt_clear":
+      return { ...state, humanPrompt: null };
+
     case "replay_end":
       return { ...state, finished: true, violations: (d.violations as string[]) ?? [] };
 
@@ -237,7 +276,8 @@ function gameReducer(state: GameState, action: Action): GameState {
 interface UseGameSocketReturn {
   gameState: GameState;
   isConnected: boolean;
-  startGame: (mode: "live" | "replay", replayFile?: string) => void;
+  startGame: (mode: "live" | "replay", replayFile?: string, humanSeat?: number | null) => void;
+  sendHumanAction: (action: string, data: Record<string, unknown>) => void;
   stopGame: () => void;
   pause: () => void;
   resume: () => void;
@@ -324,9 +364,17 @@ export function useGameSocket(
   }, [connect]);
 
   const startGame = useCallback(
-    (mode: "live" | "replay", replayFile?: string) => {
+    (mode: "live" | "replay", replayFile?: string, humanSeat?: number | null) => {
       dispatch({ type: "RESET" });
-      send({ type: "start_game", mode, replay_file: replayFile });
+      send({ type: "start_game", mode, replay_file: replayFile, human_seat: humanSeat });
+    },
+    [send]
+  );
+
+  const sendHumanAction = useCallback(
+    (action: string, data: Record<string, unknown>) => {
+      send({ type: "human_action_response", action, data });
+      dispatch({ type: "MESSAGE", msg: { type: "human_prompt_clear", seq: 0, data: {} } });
     },
     [send]
   );
@@ -335,6 +383,7 @@ export function useGameSocket(
     gameState: state,
     isConnected,
     startGame,
+    sendHumanAction,
     stopGame: useCallback(() => send({ type: "stop" }), [send]),
     pause: useCallback(() => send({ type: "control", action: "pause" }), [send]),
     resume: useCallback(() => send({ type: "control", action: "resume" }), [send]),

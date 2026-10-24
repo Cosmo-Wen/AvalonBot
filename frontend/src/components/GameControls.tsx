@@ -9,7 +9,7 @@ interface GameControlsProps {
   onStep: () => void;
   onSpeedChange: (speed: number) => void;
   onVoiceToggle: () => void;
-  onNewGame: () => void;
+  onNewGame: (humanSeat?: number | null) => void;
   onLoadReplay: (file: string) => void;
   status: string;
   availableReplays: string[];
@@ -85,7 +85,7 @@ export default function GameControls(props: GameControlsProps) {
             <select
               value={chosen}
               onChange={(e) => setReplay(e.target.value)}
-              className="max-w-[260px] rounded-full border border-medieval-border bg-medieval-surface/80 px-3 py-2 font-body text-xs text-medieval-parchment-dim focus:border-medieval-gold/40 focus:outline-none"
+              className="max-w-[240px] rounded-full border border-medieval-border bg-medieval-surface/80 px-3 py-2 font-body text-xs text-medieval-parchment-dim focus:border-medieval-gold/40 focus:outline-none"
             >
               {props.availableReplays.map((r) => (
                 <option key={r} value={r}>{replayLabel(r)}</option>
@@ -94,9 +94,17 @@ export default function GameControls(props: GameControlsProps) {
             <Button onClick={() => chosen && props.onLoadReplay(chosen)}>Watch replay</Button>
           </>
         )}
-        <Button onClick={props.onNewGame} active>
-          New live game
+        <Button onClick={() => props.onNewGame(null)} title="Launch game with all 5 AI players">
+          Spectate (All AI)
         </Button>
+        <button
+          type="button"
+          onClick={() => props.onNewGame(0)}
+          title="Play as Player 0 (Atlas) with interactive UI decisions"
+          className="rounded-full border border-medieval-gold/50 bg-medieval-gold/20 px-4 py-2 font-display text-xs font-bold text-medieval-gold hover:bg-medieval-gold/30 active:scale-95 transition-all shadow-md shadow-medieval-gold/10"
+        >
+          🎮 Play as Atlas
+        </button>
       </div>
     </div>
   );
