@@ -1,0 +1,82 @@
+{
+ "seeds": "0-13",
+ "baseline": {
+  "run": "runs/haiku/rule_graph",
+  "games": 14,
+  "good_wins": 2,
+  "three_passed": 12,
+  "assassinated_after_three": 10,
+  "merlin_top_voter": 14,
+  "merlin_sole_top_voter": 11,
+  "vote_accuracy": {
+   "merlin": 1.0,
+   "servants": 0.572
+  },
+  "vote_errors": {
+   "merlin": {
+    "approved_evil": 0,
+    "rejected_clean": 0,
+    "approved_evil_share": null
+   },
+   "servants": {
+    "approved_evil": 44,
+    "rejected_clean": 14,
+    "approved_evil_share": 0.759
+   }
+  }
+ },
+ "runs": {
+  "runs/haiku/rule_graph_cover": {
+   "games": 14,
+   "good_wins": 4,
+   "three_passed": 11,
+   "assassinated_after_three": 7,
+   "merlin_top_voter": 14,
+   "merlin_sole_top_voter": 10,
+   "vote_accuracy": {
+    "merlin": 0.838,
+    "servants": 0.571
+   },
+   "vote_errors": {
+    "merlin": {
+     "approved_evil": 7,
+     "rejected_clean": 3,
+     "approved_evil_share": 0.7
+    },
+    "servants": {
+     "approved_evil": 55,
+     "rejected_clean": 3,
+     "approved_evil_share": 0.948
+    }
+   },
+   "vs_baseline": {
+    "pairs": 14,
+    "both_passed_three": 9,
+    "good_win": {
+     "baseline_only": 2,
+     "run_only": 4,
+     "mcnemar_exact_p": 0.6875,
+     "baseline": 2,
+     "run": 4,
+     "n": 14
+    },
+    "three_passed": {
+     "baseline_only": 3,
+     "run_only": 2,
+     "mcnemar_exact_p": 1.0,
+     "baseline": 12,
+     "run": 11,
+     "n": 14
+    },
+    "assassinated": {
+     "baseline_only": 3,
+     "run_only": 2,
+     "mcnemar_exact_p": 1.0,
+     "baseline": 7,
+     "run": 6,
+     "n": 9
+    }
+   }
+  }
+ }
+}

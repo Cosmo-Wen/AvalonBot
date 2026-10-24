@@ -14,7 +14,7 @@ roles: [Merlin, Servant, Servant, Assassin, Minion]
 condition: rule_graph
 merlin_strategy: cover  # Merlin votes and picks teams from public evidence; real knowledge only at match point
 
-num_games: 12         # seeds 0-11, paired with the sol C batch; 8 games of credits stay reserved for the demo
+num_games: 8          # seeds 0-7, paired with the sol C batch; 8 games of credits stay reserved for the demo
 base_seed: 0
 shuffle_roles: true
 shuffle_seats: false  # every seat plays the same model

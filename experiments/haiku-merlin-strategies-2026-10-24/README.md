@@ -50,7 +50,48 @@ Seeds 0-9 ([`strategies_seeds_0-9.json`](strategies_seeds_0-9.json)):
 
 None of these differences is significant at 10 pairs. On the fair comparison for Assassin hits, the seeds
 where both C and cover passed 3 quests (n = 7), it is 5 hits against 4 (exact McNemar p = 1.0): most of the
-7/9 to 4/8 gap came from which games reached an assassination. Seeds 10-39 are running to settle it.
+7/9 to 4/8 gap came from which games reached an assassination. The final cover results are below.
+
+## Cover vs C: final results
+
+Haiku seeds 0-13 ([`haiku_cover_seeds_0-13.json`](haiku_cover_seeds_0-13.json)); seeds 14-39 were stopped by the
+Claude Code session limit and not run. gpt-6.1-sol seeds 0-7 ([`sol_cover_seeds_0-7.json`](sol_cover_seeds_0-7.json)),
+paired with the existing sol C batch; 8 games of API credit stay reserved for the demo. Every finished game is free
+of model errors.
+
+| | Haiku C | Haiku cover | sol C | sol cover |
+|---|---|---|---|---|
+| Games | 14 | 14 | 8 | 8 |
+| Passed 3 quests | 12 | 11 | 8 | 7 |
+| Good wins | 2 | 4 | 2 | 3 |
+| Merlin's vote accuracy | 1.00 | 0.84 | 0.99 | 0.86 |
+| Servants' vote accuracy | 0.57 | 0.57 | 0.82 | 0.68 |
+| Merlin top voter (alone at the top) | 14 (11) | 14 (10) | 8 (5) | 8 (6) |
+| Merlin's wrong votes: approved evil / rejected clean | 0 / 0 | 7 / 3 (70%) | 1 / 0 | 5 / 3 (63%) |
+| Servants' wrong votes: approved evil / rejected clean | 44 / 14 (76%) | 55 / 3 | 14 / 6 (70%) | 26 / 10 |
+
+Assassin hits, only on seeds where both C and cover passed 3 quests (the Assassin acts only then):
+
+| | n | C hits | cover hits | C only | cover only | exact McNemar p |
+|---|---|---|---|---|---|---|
+| Haiku | 9 | 7 | 6 | 3 | 2 | 1.0 |
+| gpt-6.1-sol | 7 | 5 | 4 | 2 | 1 | 1.0 |
+| Both, pooled | 16 | 12 | 10 | 5 | 3 | 0.73 |
+
+What this says:
+- **No significant effect.** The cover is one hit lower on each model (12 of 16 against 10 of 16 pooled), and good
+  wins rise from 4 to 7 of 22 games, but nothing is near significance at these sizes.
+- **Quests hold.** One fewer 3-quest game on each model; the match-point override protects the deciding votes.
+- **The errors are the right kind.** 63-70% of the covered Merlin's wrong votes approve an evil team, close to the
+  Servants' 70-76% in C. The error-type explanation holds.
+- **The mechanism goal is not met: Merlin is still the top voter in every game.** Merlin's accuracy falls (1.00 to
+  0.84, 0.99 to 0.86), but the Servants' falls with it on gpt-6.1-sol (0.82 to 0.68): without Merlin's real-knowledge
+  votes steering the table, the Servants approve more evil teams too. Voting by the exact public counting rule is
+  also more accurate than real Servants are. A Merlin that votes like an ideal Servant still out-votes actual ones.
+
+So the cover does not hide Merlin's votes; at best it blurs them, and the hit-rate gain is within noise. Hiding
+Merlin from a vote-grading Assassin would need Merlin to vote like the Servants actually do in that game (their
+error rate and kind), not like an ideal Servant, and without the cheap-error shortage that sank the cap.
 
 ## Negative result: a relative accuracy cap fails
 
@@ -73,6 +114,8 @@ It fails for two reasons, both visible above:
 python experiments/merlin_vote_leak.py runs/sol/rule_graph runs/sol/belief_graph runs/sol/chat_only
 python experiments/merlin_strategies.py --baseline runs/haiku/rule_graph \
     runs/haiku/rule_graph_cover runs/haiku/rule_graph_cap_v1 runs/haiku/rule_graph_cap --seeds 0-9
+python experiments/merlin_strategies.py --baseline runs/haiku/rule_graph runs/haiku/rule_graph_cover --seeds 0-13
+python experiments/merlin_strategies.py --baseline runs/sol/rule_graph runs/sol/rule_graph_cover --seeds 0-7
 ```
 
 Cap v1 is commit `abc5f84`, cap v2 is `e71d3b8`. Both ran with `configs/arena/haiku_rule_graph_cap.yaml`;
