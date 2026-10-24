@@ -291,6 +291,7 @@ interface UseGameSocketReturn {
   setSpeed: (speed: number) => void;
   setVoice: (on: boolean) => void;
   availableGames: string[];
+  seatClips: Record<number, string>;
 }
 
 export function useGameSocket(
@@ -300,6 +301,9 @@ export function useGameSocket(
   const [state, dispatch] = useReducer(gameReducer, INITIAL_STATE);
   const [isConnected, setIsConnected] = useState(false);
   const [availableGames, setAvailableGames] = useState<string[]>([]);
+  const [seatClips, setSeatClips] = useState<Record<number, string>>({});
+  const seatClipsRef = useRef<Record<number, string>>({});
+  seatClipsRef.current = seatClips;
   const wsRef = useRef<WebSocket | null>(null);
   const reconnectTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const reconnectDelay = useRef(1000);
@@ -341,6 +345,19 @@ export function useGameSocket(
         onAudioRef.current?.(data.speaker as number, data.audio as string);
         return;
       }
+      if (msg.type === "avatar_clip") {
+        const seat = Number(data.seat);
+        const video = String(data.video ?? "");
+        if (!video) return;
+        const binary = atob(video);
+        const bytes = new Uint8Array(binary.length);
+        for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+        const url = URL.createObjectURL(new Blob([bytes], { type: "video/mp4" }));
+        const previous = seatClipsRef.current[seat];
+        if (previous) URL.revokeObjectURL(previous);
+        setSeatClips((prev) => ({ ...prev, [seat]: url }));
+        return;
+      }
       dispatch({ type: "MESSAGE", msg: { type: msg.type, seq: msg.seq ?? 0, data } });
     };
 
@@ -372,6 +389,8 @@ export function useGameSocket(
   const startGame = useCallback(
     (mode: "live" | "replay", replayFile?: string, humanSeat?: number | null, players?: "llm" | "heuristic") => {
       dispatch({ type: "RESET" });
+      for (const url of Object.values(seatClipsRef.current)) URL.revokeObjectURL(url);
+      setSeatClips({});
       send({ type: "start_game", mode, replay_file: replayFile, human_seat: humanSeat, players });
     },
     [send]
@@ -397,5 +416,6 @@ export function useGameSocket(
     setSpeed: useCallback((speed: number) => send({ type: "control", action: "speed", value: speed }), [send]),
     setVoice: useCallback((on: boolean) => send({ type: "settings", voice: on }), [send]),
     availableGames,
+    seatClips,
   };
 }

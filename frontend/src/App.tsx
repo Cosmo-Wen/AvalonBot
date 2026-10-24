@@ -56,7 +56,7 @@ export default function App() {
 
   const audio = useAudio();
   const livekit = useLiveKit();
-  const { gameState, isConnected, startGame, sendHumanAction, pause, resume, step, setSpeed, setVoice, availableGames } =
+  const { gameState, isConnected, startGame, sendHumanAction, pause, resume, step, setSpeed, setVoice, availableGames, seatClips } =
     useGameSocket("/ws/game", audio.playAudio);
 
   const levels = useMemo(() => ({ ...audio.levels, ...livekit.levels }), [audio.levels, livekit.levels]);
@@ -252,7 +252,8 @@ export default function App() {
                 showRoles={showRoles}
                 seatVideos={livekit.seatVideos}
                 seatAudio={livekit.seatAudio}
-                muted={livekit.muted}
+                seatClips={seatClips}
+                muted={audio.isMuted}
                 levels={levels}
               >
                 <VoteOverlay events={gameState.events} />

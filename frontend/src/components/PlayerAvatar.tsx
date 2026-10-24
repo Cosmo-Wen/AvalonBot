@@ -1,4 +1,4 @@
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 import type { RemoteTrack } from "livekit-client";
 import { type Player, ROLE_DISPLAY, SEAT_COLORS, seatName } from "../types";
 
@@ -10,6 +10,7 @@ interface PlayerAvatarProps {
   showRole: boolean;
   videoTrack?: RemoteTrack | null;
   audioTrack?: RemoteTrack | null;
+  clipUrl?: string | null;
   muted?: boolean;
   level: number;
   width: number;
@@ -50,6 +51,37 @@ function AvatarVideo({ video, audio, muted, mirror }: { video: RemoteTrack; audi
   );
 }
 
+function FaceClip({ url, muted }: { url: string; muted: boolean }) {
+  const ref = useRef<HTMLVideoElement>(null);
+  useEffect(() => {
+    const el = ref.current;
+    if (!el) return;
+    el.muted = muted;
+    el.play().catch(() => undefined);
+  }, [url, muted]);
+  return (
+    <video
+      ref={ref}
+      src={url}
+      autoPlay
+      playsInline
+      className="absolute inset-0 h-full w-full object-cover object-top"
+    />
+  );
+}
+
+function FaceStill({ seat, onError }: { seat: number; onError: () => void }) {
+  return (
+    <img
+      src={`/api/face/${seat}`}
+      alt=""
+      draggable={false}
+      className="absolute inset-0 h-full w-full object-cover object-top"
+      onError={onError}
+    />
+  );
+}
+
 function Emblem({ seat }: { seat: number }) {
   const color = SEAT_COLORS[seat];
   return (
@@ -72,11 +104,12 @@ function stripTtsTokens(text: string): string {
     .trim();
 }
 
-export default function PlayerAvatar({ player, isLeader, isOnTeam, vote, showRole, videoTrack, audioTrack, muted = false, level, width }: PlayerAvatarProps) {
+export default function PlayerAvatar({ player, isLeader, isOnTeam, vote, showRole, videoTrack, audioTrack, clipUrl, muted = false, level, width }: PlayerAvatarProps) {
   const color = SEAT_COLORS[player.seat];
   const speaking = player.isSpeaking || level > 0.05;
   const height = Math.round(width * 1.25);
   const evil = player.side === "evil";
+  const [faceFailed, setFaceFailed] = useState(false);
 
   return (
     <div className="flex select-none flex-col items-center gap-1.5" style={{ width }}>
@@ -92,7 +125,11 @@ export default function PlayerAvatar({ player, isLeader, isOnTeam, vote, showRol
         }}
       >
         <div className="relative h-full w-full overflow-hidden rounded-[0.8rem] bg-medieval-surface">
-          {videoTrack ? (
+          {clipUrl ? (
+            <FaceClip url={clipUrl} muted={muted} />
+          ) : !faceFailed ? (
+            <FaceStill seat={player.seat} onError={() => setFaceFailed(true)} />
+          ) : videoTrack ? (
             <AvatarVideo video={videoTrack} audio={audioTrack} muted={muted} mirror={MIRRORED_SEATS.has(player.seat)} />
           ) : (
             <Emblem seat={player.seat} />
