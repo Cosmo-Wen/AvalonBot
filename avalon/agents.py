@@ -140,13 +140,13 @@ class HeuristicAgent(Agent):
     """
 
     async def team_discussion(self, turn: int, round_num: int, leader: int, team_size: int) -> str:
-        # Leader utterances
+        # Leader utterances (firm, determined, resonant)
         if self.player_id == leader:
             leader_templates = [
-                f"As leader for Quest {turn + 1}, I have reviewed past votes carefully. I will propose a disciplined team of size {team_size}.",
-                f"We cannot afford errors on Quest {turn + 1}. As leader, I am putting together {team_size} players with solid records.",
-                f"I take responsibility as leader for Quest {turn + 1}. I will draft a team that can bring home a Pass.",
-                f"The realm depends on this mission. As leader, I'm selecting {team_size} players I genuinely trust.",
+                f"Listen up, table! As leader for Quest {turn + 1}, we need a clean victory. I'm selecting {team_size} players with proven loyalty!",
+                f"We cannot afford mistakes here! <|prosody:pause|>As leader, I've watched past votes closely, and I'm drafting a disciplined team of size {team_size}.",
+                f"This is our moment! As leader for Quest {turn + 1}, I am taking responsibility and proposing {team_size} players I truly trust.",
+                f"The entire kingdom is watching us! As leader, I will pick {team_size} players who will actually vote Pass.",
             ]
             return self.rng.choice(leader_templates)
 
@@ -160,39 +160,39 @@ class HeuristicAgent(Agent):
             if safest:
                 safest_partner = safest[0]
 
-        # Merlin utterances (must guide good while evading Assassin)
+        # Merlin utterances (whispered, contemplative, cryptic guidance)
         if self.role == Role.MERLIN:
             merlin_templates = [
-                f"I advise extreme caution regarding Player {top_suspect}. Their voting record raises major doubts.",
-                f"If we want Quest {turn + 1} to succeed, Player {safest_partner} seems like a much safer choice than Player {top_suspect}.",
-                f"We cannot rush this proposal. Look at how the approvals lined up on the previous rounds.",
-                f"I urge the leader to keep the team composition clean. Player {top_suspect}'s claims do not add up.",
+                f"Listen closely... <|prosody:pause|>I advise extreme caution regarding Player {top_suspect}. Look at their voting record!",
+                f"If we want Quest {turn + 1} to succeed, Player {safest_partner} is a far safer choice than Player {top_suspect}. Do not walk blindly into this!",
+                f"Wait... <|prosody:pause|>look at how the approvals lined up earlier. We cannot afford to rush into another trap.",
+                f"I urge the leader: keep this team clean! Player {top_suspect}'s claims do not add up at all.",
             ]
             return self.rng.choice(merlin_templates)
 
-        # Loyal Servant utterances (earnest investigation, defending self, questioning suspects)
+        # Loyal Servant utterances (passionate, high-energy, indignant questioning)
         if self.side:
             servant_templates = [
-                f"I know with 100% certainty that I am loyal to Arthur. Put me on this mission if you want a Pass.",
-                f"Player {top_suspect}'s actions make me very nervous. Why did they support that risky lineup?",
-                f"We need to test players with clean voting histories. I trust Player {safest_partner} more than Player {top_suspect}.",
-                f"Remember we only need 3 successful quests to win. We must vote down any team that includes Player {top_suspect}.",
+                f"Wait, hold on! <|prosody:pause|>Player {top_suspect}'s actions make me furious! Why are they supporting that risky lineup?!",
+                f"I swear by Arthur that I am 100% loyal! Put me on this mission and we will bring home a Pass!",
+                f"We only need three successful quests to win this game! <|prosody:pause|>We must vote down any team that includes Player {top_suspect}!",
+                f"Look at the evidence, people! I trust Player {safest_partner} ten times more than Player {top_suspect}!",
             ]
             if round_num >= 3:
-                servant_templates.append(f"We are at round {round_num + 1} and nearing the hammer! We must agree on a loyal team now.")
+                servant_templates.append(f"We are at round {round_num + 1} and right at the hammer! <|prosody:pause|>We have to unite behind a loyal team right now!")
             return self.rng.choice(servant_templates)
 
-        # Evil utterances (Minion / Assassin: bluffing, deflecting onto innocent players, feigning indignation)
+        # Evil utterances (Minion / Assassin: feigning outrage, mocking, deflecting onto innocent players)
         else:
             seen_evil = self.private_info.get("seen_evil", [])
             # Pick a good player to deflect blame onto
             innocent_targets = [p for p in range(self.num_players) if p not in seen_evil and p != self.player_id]
             target = self.rng.choice(innocent_targets) if innocent_targets else top_suspect
             evil_templates = [
-                f"I have fought honorably for Arthur! Accusing me is a complete distraction from the real spies.",
-                f"Why is everyone ignoring Player {target}? Their behavior has been suspicious from the very first round.",
-                f"I am ready to march on Quest {turn + 1} and prove my loyalty on the battlefield. Put me on the team.",
-                f"Player {target} is deflecting attention away from themselves. We should examine their vote record.",
+                f"Are you seriously accusing me?! <|prosody:pause|>I have fought honorably for Arthur from day one! You're letting the real spies escape!",
+                f"<|sfx:laughter|>Haha! <|prosody:pause|>Why is everyone ignoring Player {target}? Their behavior has been suspect from the very first round!",
+                f"Stop pointing fingers at me! <|prosody:pause|>Player {target} is deflecting attention because they know their own voting record is dirty!",
+                f"I am ready to march right now and prove my loyalty on the battlefield! Put me on the quest team!",
             ]
             return self.rng.choice(evil_templates)
 

@@ -15,7 +15,7 @@ import wave
 import struct
 import math
 import asyncio
-from typing import Dict, Optional, Tuple
+from typing import Dict, Optional, Tuple, List
 from pathlib import Path
 import aiohttp
 
@@ -38,15 +38,37 @@ DEFAULT_SEAT_VOICES: Dict[int, str] = {
     4: os.getenv("BOSON_VOICE_4", "default"),
 }
 
-# Distinct acoustic profiles (speed multiplier + baseline emotion) per seat
-# Note: '<|emotion:suspicious|>' sounds flat/subtle in speech synthesis, so we use
-# higher-contrast tags like 'confident', 'angry', 'surprised', and varied tempo speeds.
+# Verified Boson Higgs Control Tag Profiles per seat:
+# - Emotion tokens: 'determination', 'enthusiasm', 'anger', 'fear', 'amusement', 'contemplation', 'pride'
+# - Style tokens: 'whispering', 'shouting'
+# - Prosody tokens: 'expressiveness_high', 'speed_fast', 'speed_slow', 'pause'
+# - SFX tokens: 'laughter', 'sigh'
 SEAT_PROSODY = {
-    0: {"speed": "0.92", "emotion": "confident"},  # Deliberate, steady, self-assured
-    1: {"speed": "1.00", "emotion": "neutral"},    # Standard conversational pace
-    2: {"speed": "1.15", "emotion": "surprised"},  # Fast, animated, energetic
-    3: {"speed": "0.88", "emotion": "angry"},      # Low tempo, intense, firm
-    4: {"speed": "1.06", "emotion": "confident"},  # Measured, guiding, authoritative
+    0: {  # Player 0 (Minion): Forceful, assertive, determined soldier
+        "emotion": "determination",
+        "style": None,
+        "prosody": ["expressiveness_high"],
+    },
+    1: {  # Player 1 (Loyal Servant 1): Earnest, passionate, enthusiastic defender of Arthur
+        "emotion": "enthusiasm",
+        "style": None,
+        "prosody": ["expressiveness_high"],
+    },
+    2: {  # Player 2 (Loyal Servant 2): High-energy, rapid, sharp questioning / indignation
+        "emotion": "anger",
+        "style": None,
+        "prosody": ["speed_fast", "expressiveness_high"],
+    },
+    3: {  # Player 3 (Assassin): Slow, mocking, self-assured, chilling
+        "emotion": "amusement",
+        "style": None,
+        "prosody": ["speed_slow", "expressiveness_high"],
+    },
+    4: {  # Player 4 (Merlin): Whispered, secretive, cryptic guidance to evade assassination
+        "emotion": "contemplation",
+        "style": "whispering",
+        "prosody": ["expressiveness_high"],
+    },
 }
 
 # Tones for offline fallback synthesizer (Hz)
@@ -111,22 +133,32 @@ class HiggsTTSClient:
         text: str,
         voice: str = "default",
         save_path: Optional[Path] = None,
+        style: Optional[str] = None,
         emotion: Optional[str] = None,
-        speed: Optional[str] = None,
+        prosody: Optional[List[str]] = None,
         seat: int = 0,
     ) -> Optional[bytes]:
         """
         Synthesizes text into audio bytes via Boson Higgs TTS 3.
-        Supports Higgs inline speed and emotion tags (e.g. <|speed:0.92|><|emotion:confident|>).
+        Supports Higgs inline control tokens:
+        - <|style:...|> (e.g. whispering, shouting)
+        - <|emotion:...|> (e.g. determination, anger, enthusiasm, contemplation, amusement)
+        - <|prosody:...|> (e.g. expressiveness_high, speed_fast, speed_slow, pause)
+        - <|sfx:...|> (e.g. laughter, sigh)
         """
         formatted_text = text
-        prefix_tags = ""
-        if speed and f"<|speed:" not in text:
-            prefix_tags += f"<|speed:{speed}|>"
-        if emotion and f"<|emotion:" not in text:
-            prefix_tags += f"<|emotion:{emotion}|>"
 
-        if prefix_tags and not text.startswith("<|"):
+        # If text doesn't already contain control tokens, build from parameters
+        if not text.startswith("<|"):
+            prefix_tags = ""
+            if style:
+                prefix_tags += f"<|style:{style}|>"
+            if emotion:
+                prefix_tags += f"<|emotion:{emotion}|>"
+            if prosody:
+                for p in prosody:
+                    prefix_tags += f"<|prosody:{p}|>"
+
             formatted_text = f"{prefix_tags}{text}"
 
         # If API key is present, call live Boson API
@@ -184,42 +216,38 @@ class HiggsTTSClient:
         text: str,
         turn: int,
         round_num: int,
+        style: Optional[str] = None,
         emotion: Optional[str] = None,
-        speed: Optional[str] = None,
+        prosody: Optional[List[str]] = None,
     ) -> Optional[Path]:
         """
         Synthesizes and plays a player's line out loud in their designated seat voice.
-        Applies seat-specific prosody and context-aware emotion.
+        Applies seat-specific vocal delivery profile and verified Boson control tags.
         """
         voice = self.get_voice_for_seat(seat)
         save_file = self.cache_dir / f"turn_{turn + 1}_round_{round_num + 1}_seat_{seat}.wav"
 
-        prosody = SEAT_PROSODY.get(seat, {"speed": "1.00", "emotion": "neutral"})
-        chosen_speed = speed or prosody.get("speed", "1.00")
+        profile = SEAT_PROSODY.get(seat, {
+            "emotion": "determination",
+            "style": None,
+            "prosody": ["expressiveness_high"],
+        })
 
-        # Contextual emotion selection (avoiding 'suspicious' which produces subtle/flat audio)
-        if not emotion:
-            lower = text.lower()
-            if "sabotage" in lower or "failed" in lower or "how" in lower:
-                chosen_emotion = "surprised"  # High energy reaction
-            elif "accuse" in lower or "defend" in lower or "protest" in lower or "not me" in lower:
-                chosen_emotion = "angry"      # Sharp, defensive inflection
-            elif "leader" in lower or "trust" in lower or "servant" in lower or "solid" in lower:
-                chosen_emotion = "confident"  # Resonant, firm tone
-            else:
-                chosen_emotion = prosody.get("emotion", "neutral")
-        else:
-            chosen_emotion = emotion
+        chosen_style = style or profile.get("style")
+        chosen_emotion = emotion or profile.get("emotion")
+        chosen_prosody = prosody or profile.get("prosody", ["expressiveness_high"])
 
-        print(f"  [Higgs TTS] Synthesizing Player {seat} (Voice: {voice}, Speed: {chosen_speed}, Emotion: {chosen_emotion})...")
+        tag_summary = f"Style: {chosen_style or 'normal'}, Emotion: {chosen_emotion}, Prosody: {chosen_prosody}"
+        print(f"  [Higgs TTS] Synthesizing Player {seat} ({tag_summary})...")
 
         # Synthesize audio
         await self.synthesize(
             text=text,
             voice=voice,
             save_path=save_file,
+            style=chosen_style,
             emotion=chosen_emotion,
-            speed=chosen_speed,
+            prosody=chosen_prosody,
             seat=seat,
         )
 
