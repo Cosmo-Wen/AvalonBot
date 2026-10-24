@@ -1,0 +1,27 @@
+# AvalonBot ablation, condition: rule_graph with a vote-capped Merlin (merlin_strategy: cap). Every seat on Claude Haiku via `claude -p` (Claude Code login)
+# No API key needed. The good team plays rule_graph; evil always plays chat_only.
+# Same base_seed in every condition, so game i has the same deal in each: one pair per game index.
+#   python -m arena check --config configs/arena/haiku_rule_graph_cap.yaml
+#   python -m arena run   --config configs/arena/haiku_rule_graph_cap.yaml --run-dir runs/haiku/rule_graph_cap
+
+seats:
+  - {provider: claude_cli, model: haiku}
+  - {provider: claude_cli, model: haiku}
+  - {provider: claude_cli, model: haiku}
+  - {provider: claude_cli, model: haiku}
+  - {provider: claude_cli, model: haiku}
+roles: [Merlin, Servant, Servant, Assassin, Minion]
+condition: rule_graph
+merlin_strategy: cap    # Merlin never the most accurate good voter; true votes when decisive; picks as in cover
+
+num_games: 10         # seeds 0-9, paired with haiku_rule_graph.yaml (run with --num-games 10)
+base_seed: 0
+shuffle_roles: true
+shuffle_seats: false  # every seat plays the same model
+random_leader: true
+
+concurrency: 10        # all 10 seeds at once; nothing else is running
+max_inflight_requests: 10
+cli_max_parallel: 10
+max_game_retries: 0   # a failed game is replayed by re-running the same command
+llm_timeout_s: 180

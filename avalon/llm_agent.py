@@ -12,7 +12,7 @@ Compatible with OpenAI, Boson AI, Groq, or any OpenAI-compatible API endpoint.
 import os
 import json
 from itertools import combinations
-from typing import Dict, List, Optional, Any, Sequence
+from typing import Dict, List, Optional, Any, Sequence, Tuple
 import aiohttp
 
 from .engine import Role, Phase, ROLE_NAMES, ROLE_SIDES
@@ -54,6 +54,11 @@ How you play Merlin (the Assassin is watching who reads evil correctly):
 # LLMAgent._cover_vote), so the speech only has to stay consistent with public evidence.
 MERLIN_COVER_RULES = """- Your votes and team picks follow the public evidence, the way a Servant's would. When you explain
   one, cite only that evidence: failed quests, who was on them, how people voted.
+"""
+
+# `merlin_strategy: cap` adds this instead: votes are set by LLMAgent._cap_vote.
+MERLIN_CAP_RULES = """- Your votes are cast for you. When you explain one, cite only public evidence: failed quests, who was
+  on them, how people voted. If you rejected a team that looked fine, call it caution or wanting more information.
 """
 
 # A team "looks clean" to a Servant when its P(no evil) under the public counting rule is at least
@@ -101,7 +106,8 @@ class LLMAgent(Agent):
         temperature: float = 0.7,
         seed: Optional[int] = None,
         merlin_graph: bool = False,
-        merlin_strategy: str = "default",  # "hidden": MERLIN_HIDDEN_RULES; "cover": also votes/picks by public evidence
+        merlin_strategy: str = "default",  # "hidden": MERLIN_HIDDEN_RULES; "cover": also votes/picks by public
+                                           # evidence; "cap": votes never make Merlin the most accurate voter
     ):
         super().__init__(player_id, role, num_players, condition, seed, merlin_graph=merlin_graph)
         # Unset arguments come from the standard OpenAI variables, so a local .env can route every
@@ -126,10 +132,10 @@ class LLMAgent(Agent):
             side_name="Good" if self.side else "Evil",
             seen_evil_str=seen_evil_str,
         )
-        if self.role == Role.MERLIN and self.merlin_strategy in ("hidden", "cover"):
+        if self.role == Role.MERLIN and self.merlin_strategy in ("hidden", "cover", "cap"):
             prompt += MERLIN_HIDDEN_RULES
         if self._covers:
-            prompt += MERLIN_COVER_RULES
+            prompt += MERLIN_CAP_RULES if self.merlin_strategy == "cap" else MERLIN_COVER_RULES
         return prompt
 
     def _memory_context(self) -> str:
@@ -356,7 +362,7 @@ class LLMAgent(Agent):
 
     @property
     def _covers(self) -> bool:
-        return self.role == Role.MERLIN and self.merlin_strategy == "cover"
+        return self.role == Role.MERLIN and self.merlin_strategy in ("cover", "cap")
 
     def set_private_info(self, info: Dict[str, Any]):
         super().set_private_info(info)
@@ -384,6 +390,41 @@ class LLMAgent(Agent):
         if approve and self._match_point(team):
             approve, why = False, "override: evil on the team at match point"
         self._record_reason(turn, round_num, "approved" if approve else "rejected", f"cover vote ({why})")
+        return approve
+
+    def _vote_record(self) -> Tuple[Dict[int, int], Dict[int, int]]:
+        r"""(correct, total) team votes per good player so far, graded against the truth, as the Assassin would grade it:
+        approving a team with no evil on it, or rejecting one with evil, is correct. Merlin knows the truth."""
+        evil = set(self.private_info.get("seen_evil", []))
+        right: Dict[int, int] = {}
+        total: Dict[int, int] = {}
+        for e in self.memory.log:
+            if e.kind != "team_vote":
+                continue
+            clean = not set(e.members) & evil
+            for p, approve in e.votes:
+                if p not in evil:
+                    total[p] = total.get(p, 0) + 1
+                    right[p] = right.get(p, 0) + (approve == clean)
+        return right, total
+
+    def _cap_vote(self, turn: int, round_num: int, team: List[int]) -> bool:
+        r"""Never be the most accurate good voter. Vote the truth when it's decisive (evil at match point) or
+        when it keeps Merlin's accuracy within the best Servant's; otherwise make the cheap error, rejecting
+        a clean team. An evil team is never approved to lose accuracy: that error can cost a quest."""
+        clean = not set(team) & set(self.private_info.get("seen_evil", []))
+        right, total = self._vote_record()
+        me = self.player_id
+        acc_if_true = (right.get(me, 0) + 1) / (total.get(me, 0) + 1)
+        servants = [p for p in total if p != me]
+        ceiling = max((right[p] / total[p] for p in servants), default=1.0)
+        if self._match_point(team):
+            approve, why = False, "decisive: evil on the team at match point"
+        elif acc_if_true <= ceiling or not clean:
+            approve, why = clean, f"true vote (accuracy {acc_if_true:.2f}, best Servant {ceiling:.2f})"
+        else:
+            approve, why = False, f"cheap error: reject a clean team (accuracy would be {acc_if_true:.2f}, best Servant {ceiling:.2f})"
+        self._record_reason(turn, round_num, "approved" if approve else "rejected", f"cap vote ({why})")
         return approve
 
     def _cover_team(self, turn: int, round_num: int, size: int) -> List[int]:
@@ -441,7 +482,8 @@ class LLMAgent(Agent):
             self._record_reason(turn, round_num, "approved", "hammer round auto-approves")
             return True  # Hammer round auto-approves
         if self._covers:
-            return self._cover_vote(turn, round_num, team)
+            vote = self._cap_vote if self.merlin_strategy == "cap" else self._cover_vote
+            return vote(turn, round_num, team)
 
         prompt = f"Quest {turn + 1}, Round {round_num + 1}. Leader Player {leader} proposed team {team}. Call vote_on_team to approve or reject."
         try:
