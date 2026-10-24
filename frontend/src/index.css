@@ -82,4 +82,13 @@
   .transition-fluid {
     transition-timing-function: cubic-bezier(0.32, 0.72, 0, 1);
   }
+  .edge-in {
+    animation: edgeIn 900ms cubic-bezier(0.32, 0.72, 0, 1);
+  }
+}
+
+@keyframes edgeIn {
+  from {
+    opacity: 0;
+  }
 }

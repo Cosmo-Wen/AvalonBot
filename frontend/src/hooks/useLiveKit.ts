@@ -1,143 +1,149 @@
 /**
- * LiveKit integration hook for Higgs Avatar video streams.
+ * Higgs Avatar video via LiveKit.
  *
- * When LiveKit credentials are configured on the server, this hook:
- * 1. Requests avatar sessions be created (POST /api/avatar/create)
- * 2. Gets a spectator token (GET /api/avatar/token)
- * 3. Connects to the LiveKit room
- * 4. Exposes per-seat video tracks for rendering in PlayerAvatar
- *
- * When LiveKit is unavailable, everything returns null/empty and
- * the CSS portrait fallback takes over.
+ * `start()` asks the server to start one avatar per seat (POST /api/avatar/start), then joins the
+ * room as a subscriber. Each avatar publishes lip-synced video plus its speech audio; seats without
+ * an avatar fall back to the portrait and the WebSocket audio.
  */
-
 import { useCallback, useEffect, useRef, useState } from "react";
+import { Room, RoomEvent, Track, type RemoteParticipant, type RemoteTrack } from "livekit-client";
 
-interface SeatVideoTrack {
-  track: MediaStreamTrack;
-  stream: MediaStream;
-}
+export type AvatarStatus = "checking" | "unavailable" | "idle" | "starting" | "connected" | "error";
 
-interface UseLiveKitReturn {
-  available: boolean;
-  connected: boolean;
-  seatVideos: Record<number, SeatVideoTrack>;
-  connect: () => Promise<void>;
-  disconnect: () => void;
-}
+const seatOf = (identity: string): number | null => {
+  const m = /^avatar-seat-(\d)$/.exec(identity);
+  return m ? Number(m[1]) : null;
+};
 
-const SEAT_IDENTITIES = [
-  "avatar-seat-0",
-  "avatar-seat-1",
-  "avatar-seat-2",
-  "avatar-seat-3",
-  "avatar-seat-4",
-];
+export function useLiveKit() {
+  const [status, setStatus] = useState<AvatarStatus>("checking");
+  const [message, setMessage] = useState<string>("");
+  const [seatVideos, setSeatVideos] = useState<Record<number, MediaStream>>({});
+  const [levels, setLevels] = useState<Record<number, number>>({});
+  const roomRef = useRef<Room | null>(null);
+  const audioEls = useRef<Map<string, HTMLMediaElement>>(new Map());
+  const mutedRef = useRef(false);
 
-export function useLiveKit(): UseLiveKitReturn {
-  const [available, setAvailable] = useState(false);
-  const [connected, setConnected] = useState(false);
-  const [seatVideos, setSeatVideos] = useState<Record<number, SeatVideoTrack>>({});
-  const roomRef = useRef<any>(null);
-  const cleanupRef = useRef<(() => void) | null>(null);
+  const refresh = useCallback(() => {
+    const room = roomRef.current;
+    if (!room) return;
+    const videos: Record<number, MediaStream> = {};
+    room.remoteParticipants.forEach((p: RemoteParticipant) => {
+      const seat = seatOf(p.identity);
+      if (seat === null) return;
+      p.trackPublications.forEach((pub) => {
+        const track = pub.track;
+        if (track && track.kind === Track.Kind.Video) videos[seat] = new MediaStream([track.mediaStreamTrack]);
+      });
+    });
+    setSeatVideos(videos);
+  }, []);
+
+  const connect = useCallback(async () => {
+    if (roomRef.current) return;
+    const tokenResp = await fetch("/api/avatar/token");
+    if (!tokenResp.ok) throw new Error(`token request failed (${tokenResp.status})`);
+    const { token, url } = await tokenResp.json();
+
+    const room = new Room({ adaptiveStream: true, dynacast: true });
+    roomRef.current = room;
+    room
+      .on(RoomEvent.TrackSubscribed, (track: RemoteTrack) => {
+        if (track.kind === Track.Kind.Audio) {
+          const el = track.attach();
+          el.muted = mutedRef.current;
+          el.style.display = "none";
+          document.body.appendChild(el);
+          audioEls.current.set(track.sid ?? String(Math.random()), el);
+        }
+        refresh();
+      })
+      .on(RoomEvent.TrackUnsubscribed, (track: RemoteTrack) => {
+        track.detach().forEach((el) => el.remove());
+        if (track.sid) audioEls.current.delete(track.sid);
+        refresh();
+      })
+      .on(RoomEvent.ParticipantConnected, refresh)
+      .on(RoomEvent.ParticipantDisconnected, refresh)
+      .on(RoomEvent.ActiveSpeakersChanged, (speakers) => {
+        const next: Record<number, number> = {};
+        for (const p of speakers) {
+          const seat = seatOf(p.identity);
+          if (seat !== null) next[seat] = Math.min(1, p.audioLevel * 3);
+        }
+        setLevels(next);
+      })
+      .on(RoomEvent.Disconnected, () => {
+        if (roomRef.current !== room) return;
+        roomRef.current = null;
+        setSeatVideos({});
+        setStatus("idle");
+      });
+
+    await room.connect(url, token);
+    await room.startAudio().catch(() => undefined);
+    setStatus("connected");
+    refresh();
+  }, [refresh]);
 
   useEffect(() => {
+    let cancelled = false;
     fetch("/api/avatar/status")
       .then((r) => r.json())
-      .then((data) => setAvailable(data.available === true))
-      .catch(() => setAvailable(false));
-  }, []);
-
-  const connectToRoom = useCallback(async () => {
-    if (!available) return;
-
-    try {
-      const createResp = await fetch("/api/avatar/create", { method: "POST" });
-      if (!createResp.ok) return;
-
-      const tokenResp = await fetch("/api/avatar/token");
-      if (!tokenResp.ok) return;
-      const { token, url } = await tokenResp.json();
-      if (!token || !url) return;
-
-      // Dynamically import livekit-client (only loaded when avatars are available)
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      let lk: any;
-      try {
-        const modName = "livekit-client";
-        lk = await (Function("m", "return import(m)")(modName));
-      } catch {
-        console.warn("[livekit] livekit-client not installed, avatars unavailable");
-        return;
-      }
-
-      const room = new lk.Room({
-        adaptiveStream: true,
-        dynacast: true,
-      });
-
-      roomRef.current = room;
-
-      const updateTracks = () => {
-        const videos: Record<number, SeatVideoTrack> = {};
-        room.remoteParticipants.forEach((participant: any) => {
-          const identity = participant.identity;
-          const seatIdx = SEAT_IDENTITIES.indexOf(identity);
-          if (seatIdx === -1) return;
-
-          participant.videoTrackPublications.forEach((pub: any) => {
-            if (pub.track && pub.track.mediaStreamTrack) {
-              const msTrack = pub.track.mediaStreamTrack;
-              const stream = new MediaStream([msTrack]);
-              videos[seatIdx] = { track: msTrack, stream };
-            }
-          });
-        });
-        setSeatVideos(videos);
-      };
-
-      room.on(lk.RoomEvent.TrackSubscribed, updateTracks);
-      room.on(lk.RoomEvent.TrackUnsubscribed, updateTracks);
-      room.on(lk.RoomEvent.ParticipantConnected, updateTracks);
-      room.on(lk.RoomEvent.ParticipantDisconnected, updateTracks);
-      room.on(lk.RoomEvent.Disconnected, () => {
-        setConnected(false);
-        setSeatVideos({});
-      });
-
-      await room.connect(url, token);
-      setConnected(true);
-      updateTracks();
-
-      cleanupRef.current = () => {
-        room.disconnect();
-        roomRef.current = null;
-        setConnected(false);
-        setSeatVideos({});
-        fetch("/api/avatar/release", { method: "DELETE" }).catch(() => {});
-      };
-    } catch (e) {
-      console.warn("[livekit] connection failed:", e);
-      setConnected(false);
-    }
-  }, [available]);
-
-  const disconnect = useCallback(() => {
-    cleanupRef.current?.();
-    cleanupRef.current = null;
-  }, []);
-
-  useEffect(() => {
+      .then(async (info) => {
+        if (cancelled) return;
+        if (!info.available) {
+          setStatus("unavailable");
+          return;
+        }
+        setStatus("idle");
+        const running = Object.values(info.seats ?? {}).some((s) => (s as { ready: boolean }).ready);
+        if (running) await connect().catch(() => setStatus("idle"));
+      })
+      .catch(() => !cancelled && setStatus("unavailable"));
     return () => {
-      cleanupRef.current?.();
+      cancelled = true;
     };
+  }, [connect]);
+
+  useEffect(
+    () => () => {
+      roomRef.current?.disconnect();
+      audioEls.current.forEach((el) => el.remove());
+    },
+    []
+  );
+
+  /** Starts the seat avatars on the server (can take ~30 s) and joins their room. */
+  const start = useCallback(async () => {
+    setStatus("starting");
+    setMessage("");
+    try {
+      const resp = await fetch("/api/avatar/start", { method: "POST" });
+      const info = await resp.json();
+      if (!resp.ok) throw new Error(info.error ?? `start failed (${resp.status})`);
+      const errors = Object.entries(info.errors ?? {});
+      if (errors.length) setMessage(errors.map(([s, e]) => `Seat ${s}: ${String(e).slice(0, 80)}`).join(" · "));
+      await connect();
+      roomRef.current?.startAudio().catch(() => undefined);
+    } catch (e) {
+      setStatus("error");
+      setMessage(e instanceof Error ? e.message : String(e));
+    }
+  }, [connect]);
+
+  const stop = useCallback(async () => {
+    roomRef.current?.disconnect();
+    roomRef.current = null;
+    setSeatVideos({});
+    await fetch("/api/avatar/release", { method: "DELETE" }).catch(() => undefined);
+    setStatus("idle");
   }, []);
 
-  return {
-    available,
-    connected,
-    seatVideos,
-    connect: connectToRoom,
-    disconnect,
-  };
+  const setMuted = useCallback((muted: boolean) => {
+    mutedRef.current = muted;
+    audioEls.current.forEach((el) => (el.muted = muted));
+  }, []);
+
+  return { status, message, seatVideos, levels, start, stop, setMuted };
 }

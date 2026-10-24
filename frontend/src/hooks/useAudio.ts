@@ -1,228 +1,114 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 
-const SAMPLE_RATE = 24000;
-const CHANNELS = 1;
-const RMS_SMOOTHING = 0.3;
-
-interface SeatAudioState {
-  queue: AudioBuffer[];
-  isPlaying: boolean;
-  level: number;
-  sourceNode: AudioBufferSourceNode | null;
+/**
+ * Plays per-seat speech sent over the game socket (base64 WAV from Higgs TTS) and reports
+ * each seat's live level. Used only when that seat has no LiveKit avatar.
+ */
+interface SeatChannel {
+  analyser: AnalyserNode;
+  queue: Promise<void>;
+  playing: boolean;
 }
 
-interface UseAudioReturn {
-  audioLevels: Record<number, number>;
-  isSpeaking: Record<number, boolean>;
-  playAudioChunk: (seat: number, base64Pcm: string) => void;
-  connectRealtimeAudio: (seat: number, wsUrl: string) => void;
-  disconnectRealtimeAudio: (seat: number) => void;
-  setMuted: (muted: boolean) => void;
-  isMuted: boolean;
-}
-
-function decodeBase64Pcm(ctx: AudioContext, base64: string): AudioBuffer {
-  const binary = atob(base64);
-  const bytes = new Uint8Array(binary.length);
-  for (let i = 0; i < binary.length; i++) {
-    bytes[i] = binary.charCodeAt(i);
-  }
-  const int16 = new Int16Array(bytes.buffer);
-  const float32 = new Float32Array(int16.length);
-  for (let i = 0; i < int16.length; i++) {
-    float32[i] = int16[i] / 32768;
-  }
-  const buffer = ctx.createBuffer(CHANNELS, float32.length, SAMPLE_RATE);
-  buffer.copyToChannel(float32, 0);
-  return buffer;
-}
-
-function computeRms(buffer: AudioBuffer): number {
-  const data = buffer.getChannelData(0);
-  let sum = 0;
-  const step = Math.max(1, Math.floor(data.length / 256));
-  let count = 0;
-  for (let i = 0; i < data.length; i += step) {
-    sum += data[i] * data[i];
-    count++;
-  }
-  return Math.sqrt(sum / count);
-}
-
-export function useAudio(): UseAudioReturn {
+export function useAudio() {
   const ctxRef = useRef<AudioContext | null>(null);
   const gainRef = useRef<GainNode | null>(null);
-  const seatsRef = useRef<Map<number, SeatAudioState>>(new Map());
-  const realtimeWsRef = useRef<Map<number, WebSocket>>(new Map());
-  const [audioLevels, setAudioLevels] = useState<Record<number, number>>({});
-  const [isSpeaking, setIsSpeaking] = useState<Record<number, boolean>>({});
-  const [isMuted, setIsMutedState] = useState(false);
-  const animFrameRef = useRef<number>(0);
+  const seatsRef = useRef<Map<number, SeatChannel>>(new Map());
+  const [levels, setLevels] = useState<Record<number, number>>({});
+  const [isMuted, setIsMuted] = useState(false);
 
   const getCtx = useCallback(() => {
     if (!ctxRef.current) {
-      ctxRef.current = new AudioContext({ sampleRate: SAMPLE_RATE });
-      gainRef.current = ctxRef.current.createGain();
-      gainRef.current.connect(ctxRef.current.destination);
+      const ctx = new AudioContext();
+      const gain = ctx.createGain();
+      gain.connect(ctx.destination);
+      ctxRef.current = ctx;
+      gainRef.current = gain;
     }
-    if (ctxRef.current.state === "suspended") {
-      ctxRef.current.resume();
-    }
+    if (ctxRef.current.state === "suspended") void ctxRef.current.resume();
     return ctxRef.current;
   }, []);
 
-  const getSeatState = useCallback((seat: number): SeatAudioState => {
-    let s = seatsRef.current.get(seat);
-    if (!s) {
-      s = { queue: [], isPlaying: false, level: 0, sourceNode: null };
-      seatsRef.current.set(seat, s);
-    }
-    return s;
-  }, []);
-
-  const updateLevels = useCallback(() => {
-    const levels: Record<number, number> = {};
-    const speaking: Record<number, boolean> = {};
-    seatsRef.current.forEach((s, seat) => {
-      levels[seat] = s.level;
-      speaking[seat] = s.isPlaying;
-    });
-    setAudioLevels(levels);
-    setIsSpeaking(speaking);
-  }, []);
-
-  const playNext = useCallback(
+  const channel = useCallback(
     (seat: number) => {
-      const ctx = getCtx();
-      const s = getSeatState(seat);
-
-      if (s.queue.length === 0) {
-        s.isPlaying = false;
-        s.level = 0;
-        updateLevels();
-        return;
+      let ch = seatsRef.current.get(seat);
+      if (!ch) {
+        const ctx = getCtx();
+        const analyser = ctx.createAnalyser();
+        analyser.fftSize = 512;
+        analyser.connect(gainRef.current!);
+        ch = { analyser, queue: Promise.resolve(), playing: false };
+        seatsRef.current.set(seat, ch);
       }
-
-      s.isPlaying = true;
-      const buffer = s.queue.shift()!;
-      const rms = computeRms(buffer);
-      s.level = s.level * RMS_SMOOTHING + rms * (1 - RMS_SMOOTHING);
-      s.level = Math.min(1, s.level * 4);
-
-      const source = ctx.createBufferSource();
-      source.buffer = buffer;
-      source.connect(gainRef.current!);
-      s.sourceNode = source;
-
-      source.onended = () => {
-        s.sourceNode = null;
-        playNext(seat);
-      };
-
-      source.start();
-      updateLevels();
+      return ch;
     },
-    [getCtx, getSeatState, updateLevels]
+    [getCtx]
   );
 
-  const playAudioChunk = useCallback(
-    (seat: number, base64Pcm: string) => {
+  const playAudio = useCallback(
+    (seat: number, base64Wav: string) => {
       const ctx = getCtx();
-      const s = getSeatState(seat);
-      const buffer = decodeBase64Pcm(ctx, base64Pcm);
-      s.queue.push(buffer);
-
-      if (!s.isPlaying) {
-        playNext(seat);
-      }
-    },
-    [getCtx, getSeatState, playNext]
-  );
-
-  const connectRealtimeAudio = useCallback(
-    (seat: number, wsUrl: string) => {
-      const existing = realtimeWsRef.current.get(seat);
-      if (existing) {
-        existing.close();
-      }
-
-      const ws = new WebSocket(wsUrl);
-      realtimeWsRef.current.set(seat, ws);
-
-      ws.onmessage = (event) => {
-        let msg: { type?: string; audio?: string };
+      const ch = channel(seat);
+      const bytes = Uint8Array.from(atob(base64Wav), (c) => c.charCodeAt(0));
+      ch.queue = ch.queue.then(async () => {
         try {
-          msg = JSON.parse(event.data);
-        } catch {
+          const buffer = await ctx.decodeAudioData(bytes.buffer.slice(0));
+          await new Promise<void>((resolve) => {
+            const source = ctx.createBufferSource();
+            source.buffer = buffer;
+            source.connect(ch.analyser);
+            source.onended = () => {
+              ch.playing = false;
+              resolve();
+            };
+            ch.playing = true;
+            source.start();
+          });
+        } catch (e) {
+          console.warn("[audio] could not play speech", e);
+        }
+      });
+    },
+    [getCtx, channel]
+  );
+
+  const setMuted = useCallback((muted: boolean) => {
+    setIsMuted(muted);
+    const ctx = ctxRef.current;
+    if (gainRef.current && ctx) gainRef.current.gain.setTargetAtTime(muted ? 0 : 1, ctx.currentTime, 0.05);
+  }, []);
+
+  /** Browsers block audio until a user gesture; call this from a click. */
+  const unlock = useCallback(() => {
+    getCtx();
+  }, [getCtx]);
+
+  useEffect(() => {
+    let frame = 0;
+    const data = new Uint8Array(256);
+    const tick = () => {
+      const next: Record<number, number> = {};
+      seatsRef.current.forEach((ch, seat) => {
+        if (!ch.playing) {
+          next[seat] = 0;
           return;
         }
-        if (msg.type === "audio" && msg.audio) {
-          playAudioChunk(seat, msg.audio);
-        }
-      };
-
-      ws.onclose = () => {
-        realtimeWsRef.current.delete(seat);
-        const s = getSeatState(seat);
-        s.isPlaying = false;
-        s.level = 0;
-        updateLevels();
-      };
-    },
-    [playAudioChunk, getSeatState, updateLevels]
-  );
-
-  const disconnectRealtimeAudio = useCallback((seat: number) => {
-    const ws = realtimeWsRef.current.get(seat);
-    if (ws) {
-      ws.close();
-      realtimeWsRef.current.delete(seat);
-    }
+        ch.analyser.getByteTimeDomainData(data);
+        let sum = 0;
+        for (const v of data) sum += ((v - 128) / 128) ** 2;
+        next[seat] = Math.min(1, Math.sqrt(sum / data.length) * 5);
+      });
+      setLevels((prev) => {
+        const same = Object.keys(next).every((k) => Math.abs((prev[+k] ?? 0) - next[+k]) < 0.02);
+        return same && Object.keys(prev).length === Object.keys(next).length ? prev : next;
+      });
+      frame = requestAnimationFrame(tick);
+    };
+    frame = requestAnimationFrame(tick);
+    return () => cancelAnimationFrame(frame);
   }, []);
 
-  const setMuted = useCallback(
-    (muted: boolean) => {
-      setIsMutedState(muted);
-      if (gainRef.current) {
-        gainRef.current.gain.setTargetAtTime(
-          muted ? 0 : 1,
-          ctxRef.current?.currentTime ?? 0,
-          0.05
-        );
-      }
-    },
-    []
-  );
+  useEffect(() => () => void ctxRef.current?.close(), []);
 
-  useEffect(() => {
-    let running = true;
-    const tick = () => {
-      if (!running) return;
-      updateLevels();
-      animFrameRef.current = requestAnimationFrame(tick);
-    };
-    animFrameRef.current = requestAnimationFrame(tick);
-    return () => {
-      running = false;
-      cancelAnimationFrame(animFrameRef.current);
-    };
-  }, [updateLevels]);
-
-  useEffect(() => {
-    return () => {
-      realtimeWsRef.current.forEach((ws) => ws.close());
-      realtimeWsRef.current.clear();
-      ctxRef.current?.close();
-    };
-  }, []);
-
-  return {
-    audioLevels,
-    isSpeaking,
-    playAudioChunk,
-    connectRealtimeAudio,
-    disconnectRealtimeAudio,
-    setMuted,
-    isMuted,
-  };
+  return { playAudio, levels, setMuted, isMuted, unlock };
 }

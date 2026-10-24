@@ -40,13 +40,16 @@ SAMPLE_RATE = 24000
 FRAME_MS = 20
 MAX_DURATION_SECONDS = 3600
 PLAYOUT_TIMEOUT = 60.0
+CREATE_ATTEMPTS = 5
 
+# Boson's presets. A second concurrent James session was refused (404), so James appears once.
+# Override per seat with BOSON_AVATAR_<seat>.
 PRESET_AVATARS = [
     "builtin_james_v1",
     "builtin_claire_v1",
-    "builtin_james_v1",
     "builtin_emma_v1",
     "builtin_claire_v1",
+    "builtin_emma_v1",
 ]
 
 
@@ -143,14 +146,20 @@ class AvatarManager:
             "max_duration_seconds": MAX_DURATION_SECONDS,
         }
         headers = {"Authorization": f"Bearer {BOSON_API_KEY}"}
-        try:
-            async with http.post(f"{BOSON_BASE_URL}/avatar/sessions", json=body, headers=headers,
-                                 timeout=aiohttp.ClientTimeout(total=90)) as resp:
-                if resp.status == 201:
-                    return SeatAvatar(seat, (await resp.json())["id"])
-                self.errors[seat] = f"create failed {resp.status}: {(await resp.text())[:200]}"
-        except Exception as exc:  # network errors, timeouts
-            self.errors[seat] = f"create error: {exc}"
+        for attempt in range(CREATE_ATTEMPTS):
+            try:
+                async with http.post(f"{BOSON_BASE_URL}/avatar/sessions", json=body, headers=headers,
+                                     timeout=aiohttp.ClientTimeout(total=90)) as resp:
+                    if resp.status == 201:
+                        return SeatAvatar(seat, (await resp.json())["id"])
+                    self.errors[seat] = f"create failed {resp.status}: {(await resp.text())[:200]}"
+                    if resp.status != 429:
+                        break
+                    retry_after = float(resp.headers.get("Retry-After", 2 + 2 * attempt))
+            except Exception as exc:  # network errors, timeouts: creation is not idempotent, so don't retry
+                self.errors[seat] = f"create error: {exc}"
+                break
+            await asyncio.sleep(retry_after)
         print(f"[avatar] seat {seat}: {self.errors[seat]}")
         return None
 
@@ -171,19 +180,19 @@ class AvatarManager:
             return {}
         async with self._lock:
             missing = [s for s in range(5) if s not in self.seats]
-            if missing:
-                async with aiohttp.ClientSession() as http:
-                    created = await asyncio.gather(*(self._create_session(http, s) for s in missing))
-                for avatar in created:
+            # One at a time: parallel creates hit Boson's rate limit
+            async with aiohttp.ClientSession() as http:
+                for seat in missing:
+                    avatar = await self._create_session(http, seat)
                     if avatar is None:
                         continue
-                    self.seats[avatar.seat] = avatar
-                    self.errors.pop(avatar.seat, None)
+                    self.seats[seat] = avatar
+                    self.errors.pop(seat, None)
                     try:
                         await self._connect_voice(avatar)
                     except Exception as exc:
-                        self.errors[avatar.seat] = f"voice connect error: {exc}"
-                        print(f"[avatar] seat {avatar.seat}: {self.errors[avatar.seat]}")
+                        self.errors[seat] = f"voice connect error: {exc}"
+                        print(f"[avatar] seat {seat}: {self.errors[seat]}")
             return dict(self.seats)
 
     async def speak(self, seat: int, wav_bytes: bytes) -> bool:

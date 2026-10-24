@@ -2,358 +2,354 @@
 FastAPI WebSocket server for the Avalon spectator frontend.
 
 Modes:
-- Replay: steps through a recorded .jsonl game log with configurable delay.
-- Live: runs a real game with HeuristicAgents, streaming events + TTS audio.
+- Replay: steps through a recorded arena game (`games/game_*.jsonl`), rebuilding every player's
+  memory and knowledge graph as it goes (with `talk_edges.json` from the same folder, if present).
+- Live: runs a game with HeuristicAgents and streams every event plus each agent's own memory.
 
-Run:  uvicorn server.ws_server:app --reload
+Speech: each utterance is synthesized with Higgs TTS. If the seat's LiveKit avatar is running, the
+audio goes to the avatar (the browser hears it from LiveKit); otherwise it is sent over this socket.
+
+Messages to the browser (all {"type", "seq", "data"}):
+  game_list, game_start, role_reveal, utterance, evil_chat, speaking, audio, team_proposed,
+  team_vote_result, quest_result, assassination, game_over, memory_update, replay_end, error
+
+Run:  py -3.12 -m uvicorn server.ws_server:app --port 8000
 """
 
 import asyncio
+import base64
+import contextlib
 import glob
+import io
 import json
 import os
 import sys
+import wave
 from typing import Any, Dict, List, Optional
 
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+sys.path.insert(0, ROOT)
 
-from avalon.engine import Role, ROLE_NAMES  # noqa: E402
 from avalon.agents import HeuristicAgent  # noqa: E402
+from avalon.arena_adapter import ArenaGraphAdapter  # noqa: E402
+from avalon.engine import ROLE_NAMES, Role  # noqa: E402
+from avalon.replay import load_events, load_talk_edges  # noqa: E402
 from avalon.runner import AvalonGameRunner  # noqa: E402
-from speech.boson_tts import HiggsTTSClient  # noqa: E402
-from server.game_state import (  # noqa: E402
-    serialize_game_state,
-    serialize_event,
-    translate_arena_event,
-    PLAYER_NAMES,
-)
-from server.audio_proxy import (  # noqa: E402
-    get_tts_audio,
-    mint_realtime_token,
-    build_realtime_session_config,
-    BOSON_API_KEY,
-)
+from server.audio_proxy import BOSON_API_KEY, get_tts_audio  # noqa: E402
 from server.livekit_avatars import AvatarManager  # noqa: E402
+from server.memory_view import serialize_memories  # noqa: E402
 
-app = FastAPI(title="AvalonBot Spectator Server")
-
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
+GAME_PATTERNS = ["runs/**/games/game_*.jsonl", "experiments/**/games/game_*.jsonl"]
 
 avatar_manager = AvatarManager()
 
 
+@contextlib.asynccontextmanager
+async def lifespan(_app: FastAPI):
+    yield
+    await avatar_manager.release_all()
+
+
+app = FastAPI(title="AvalonBot Spectator Server", lifespan=lifespan)
+app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
+
+
+def list_game_files() -> List[str]:
+    found = set()
+    for pattern in GAME_PATTERNS:
+        for path in glob.glob(os.path.join(ROOT, pattern), recursive=True):
+            if ".partial." not in path:
+                found.add(os.path.relpath(path, ROOT).replace("\\", "/"))
+    return sorted(found)
+
+
+def talk_edges_for(game_path: str) -> List[Dict[str, Any]]:
+    """Hand-labelled or extracted talk edges stored next to the game's `games/` folder."""
+    folder = os.path.dirname(os.path.dirname(game_path))
+    path = os.path.join(folder, "talk_edges.json")
+    return load_talk_edges(path) if os.path.exists(path) else []
+
+
+def wav_seconds(wav_bytes: bytes) -> float:
+    with wave.open(io.BytesIO(wav_bytes)) as w:
+        return w.getnframes() / float(w.getframerate())
+
+
 @app.get("/api/health")
 async def health():
-    return {"status": "ok", "has_boson_key": bool(BOSON_API_KEY)}
+    return {"status": "ok", "has_boson_key": bool(BOSON_API_KEY), "avatars": avatar_manager.is_available}
 
 
 @app.get("/api/games")
-async def list_games():
-    """Lists recorded game .jsonl files from runs/ directories."""
-    base = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-    games = []
-    for pattern in ["runs/*/games/game_*.jsonl", "runs/*/*/games/game_*.jsonl"]:
-        for path in sorted(glob.glob(os.path.join(base, pattern))):
-            if ".partial." in path:
-                continue
-            rel = os.path.relpath(path, base)
-            games.append({"path": rel, "name": rel.replace("\\", "/")})
-    return JSONResponse({"games": games})
-
-
-@app.get("/api/realtime/token/{seat}")
-async def realtime_token(seat: int):
-    """Mints an ephemeral Higgs Realtime token for a given seat."""
-    try:
-        token = await mint_realtime_token()
-        config = build_realtime_session_config(seat)
-        return JSONResponse({"token": token, "session_config": config})
-    except Exception as e:
-        return JSONResponse({"error": str(e)}, status_code=500)
+async def api_games():
+    return JSONResponse({"games": list_game_files()})
 
 
 @app.get("/api/avatar/status")
 async def avatar_status():
-    """Returns LiveKit avatar room info and whether avatars are available."""
     return JSONResponse(avatar_manager.get_room_info())
 
 
-@app.post("/api/avatar/create")
-async def create_avatars():
-    """Creates avatar sessions for all 5 seats in the LiveKit room."""
+@app.post("/api/avatar/start")
+async def avatar_start():
     if not avatar_manager.is_available:
-        return JSONResponse(
-            {"error": "LiveKit credentials not configured", "available": False},
-            status_code=503,
-        )
-    await avatar_manager.release_all()
-    created = await avatar_manager.create_all()
-    return JSONResponse({
-        "created": len(created),
-        "seats": {str(s): a.avatar_identity for s, a in created.items()},
-        "room_info": avatar_manager.get_room_info(),
-    })
+        return JSONResponse({"error": "LiveKit or Boson credentials not configured", "available": False}, status_code=503)
+    await avatar_manager.start()
+    return JSONResponse(avatar_manager.get_room_info())
+
+
+@app.post("/api/avatar/say/{seat}")
+async def avatar_say(seat: int, text: str = "I am a loyal servant of Arthur."):
+    """Makes one seat's avatar speak a line, to check voice and lip-sync."""
+    wav_b64 = await get_tts_audio(text, seat)
+    if not wav_b64:
+        return JSONResponse({"error": "TTS failed"}, status_code=502)
+    spoke = await avatar_manager.speak(seat, base64.b64decode(wav_b64))
+    return JSONResponse({"spoke": spoke, "seconds": round(wav_seconds(base64.b64decode(wav_b64)), 2)})
 
 
 @app.delete("/api/avatar/release")
-async def release_avatars():
-    """Releases all active avatar sessions."""
+async def avatar_release():
     await avatar_manager.release_all()
     return JSONResponse({"released": True})
 
 
 @app.get("/api/avatar/token")
-async def avatar_browser_token():
-    """Mints a LiveKit room token for the browser spectator."""
+async def avatar_token():
     if not avatar_manager.is_available:
         return JSONResponse({"error": "LiveKit not configured"}, status_code=503)
-    token = avatar_manager.get_browser_token()
     return JSONResponse({
-        "token": token,
+        "token": avatar_manager.get_browser_token(),
         "url": os.getenv("LIVEKIT_URL", ""),
         "room": avatar_manager.room_name,
+        "identities": avatar_manager.identities(),
     })
 
 
-# ── Main game WebSocket ──────────────────────────────────────────────
+# ── Session: one spectator connection ────────────────────────────────
 
 class GameSession:
-    """Tracks state for one spectator WebSocket connection."""
-
     def __init__(self, ws: WebSocket):
         self.ws = ws
         self.paused = False
-        self.speed = 1.0  # multiplier for replay delay
-        self.step_event = asyncio.Event()
-        self.cancelled = False
+        self.speed = 1.0
+        self.voice = True
+        self.wake = asyncio.Event()
+        self.task: Optional[asyncio.Task] = None
+        self.closed = False
 
-    async def send(self, msg: Dict[str, Any]):
-        await self.ws.send_json(msg)
-
-    async def wait_delay(self, base_seconds: float):
-        """Waits for a delay (respecting speed and pause), or returns immediately on step."""
-        if self.cancelled:
+    async def send(self, type_: str, data: Dict[str, Any], seq: int = 0) -> None:
+        if self.closed:
             return
-        delay = base_seconds / max(self.speed, 0.1)
-        if self.paused:
-            self.step_event.clear()
-            await self.step_event.wait()
-            if self.paused:
+        try:
+            await self.ws.send_json({"type": type_, "seq": seq, "data": data})
+        except Exception:
+            self.closed = True
+
+    def start(self, coro) -> None:
+        if self.task is not None and not self.task.done():
+            self.task.cancel()
+        self.paused = False
+        self.task = asyncio.create_task(self._run(coro))
+
+    async def _run(self, coro) -> None:
+        try:
+            await coro
+        except asyncio.CancelledError:
+            pass
+        except Exception as exc:
+            await self.send("error", {"message": f"{type(exc).__name__}: {exc}"})
+            raise
+
+    def step(self) -> None:
+        self.wake.set()
+
+    async def gate(self) -> None:
+        """Blocks while paused, until the spectator resumes or steps once."""
+        while self.paused:
+            self.wake.clear()
+            await self.wake.wait()
+            if self.paused:  # a single step
                 return
-        await asyncio.sleep(delay)
+
+    async def sleep(self, seconds: float) -> None:
+        """Waits `seconds` (scaled by speed); a step or resume cuts it short."""
+        self.wake.clear()
+        with contextlib.suppress(asyncio.TimeoutError):
+            await asyncio.wait_for(self.wake.wait(), seconds / max(self.speed, 0.1))
+
+    async def speak(self, seat: int, text: str, seq: int) -> None:
+        """Voices one line: through the seat's avatar if it is running, else over this socket."""
+        await self.send("speaking", {"seat": seat, "active": True}, seq)
+        wav_b64 = await get_tts_audio(text, seat) if self.voice and self.speed <= 2 else None
+        if wav_b64 and avatar_manager.has_seat(seat):
+            await avatar_manager.speak(seat, base64.b64decode(wav_b64))
+        elif wav_b64:
+            await self.send("audio", {"speaker": seat, "audio": wav_b64, "format": "wav"}, seq)
+            await self.sleep(wav_seconds(base64.b64decode(wav_b64)) + 0.3)
+        else:
+            await self.sleep(min(6.0, 1.2 + 0.045 * len(text.split()) * 6))
+        await self.send("speaking", {"seat": seat, "active": False}, seq)
+
+
+def roles_payload(roles: Dict[int, Role], sides: Dict[int, bool]) -> Dict[str, Any]:
+    return {"roles": {str(s): {"role": ROLE_NAMES[r], "side": "Good" if sides[s] else "Evil"} for s, r in roles.items()}}
 
 
 @app.websocket("/ws/game")
 async def game_ws(ws: WebSocket):
     await ws.accept()
     session = GameSession(ws)
+    await session.send("game_list", {"games": list_game_files()})
+    try:
+        while True:
+            msg = json.loads(await ws.receive_text())
+            kind = msg.get("type")
+            if kind == "list_games":
+                await session.send("game_list", {"games": list_game_files()})
+            elif kind == "start_game":
+                if msg.get("mode") == "replay":
+                    session.start(run_replay(session, msg.get("replay_file") or ""))
+                else:
+                    session.start(run_live_game(session))
+            elif kind == "stop":
+                if session.task is not None:
+                    session.task.cancel()
+            elif kind == "settings":
+                if "voice" in msg:
+                    session.voice = bool(msg["voice"])
+            elif kind == "control":
+                action = msg.get("action")
+                if action == "pause":
+                    session.paused = True
+                elif action == "resume":
+                    session.paused = False
+                    session.step()
+                elif action == "step":
+                    session.step()
+                elif action == "speed":
+                    session.speed = float(msg.get("value", 1.0))
+    except (WebSocketDisconnect, RuntimeError):
+        pass
+    finally:
+        session.closed = True
+        if session.task is not None:
+            session.task.cancel()
 
-    # Control message handler runs concurrently
-    async def control_loop():
-        try:
-            while True:
-                raw = await ws.receive_text()
-                msg = json.loads(raw)
-                if msg.get("type") == "control":
-                    action = msg.get("action")
-                    if action == "pause":
-                        session.paused = True
-                    elif action == "resume":
-                        session.paused = False
-                        session.step_event.set()
-                    elif action == "step":
-                        session.step_event.set()
-                    elif action == "speed":
-                        session.speed = float(msg.get("value", 1.0))
-                elif msg.get("type") == "start_game":
-                    mode = msg.get("mode", "live")
-                    if mode == "replay":
-                        asyncio.ensure_future(run_replay(session, msg.get("replay_file", "")))
-                    else:
-                        asyncio.ensure_future(run_live_game(session))
-        except WebSocketDisconnect:
-            session.cancelled = True
-        except Exception:
-            session.cancelled = True
 
-    await control_loop()
+# ── Replay ───────────────────────────────────────────────────────────
 
-
-# ── Replay mode ──────────────────────────────────────────────────────
-
-async def run_replay(session: GameSession, replay_file: str):
-    """Steps through a recorded arena .jsonl file, sending translated events."""
-    base = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-    path = os.path.join(base, replay_file)
-
-    if not os.path.exists(path):
-        await session.send({"type": "error", "data": {"message": f"File not found: {replay_file}"}})
+async def run_replay(session: GameSession, replay_file: str) -> None:
+    path = os.path.normpath(os.path.join(ROOT, replay_file))
+    if not path.startswith(ROOT) or not os.path.exists(path):
+        await session.send("error", {"message": f"Replay not found: {replay_file}"})
         return
-
-    from arena.events import read_events  # noqa: E402
-    events = read_events(path)
-
-    await session.send({"type": "replay_start", "data": {"file": replay_file, "total_events": len(events)}})
+    events = load_events(path)
+    adapter = ArenaGraphAdapter(talk_edges_for(path))
+    pending_votes: Dict[str, bool] = {}
 
     for raw in events:
-        if session.cancelled:
-            break
-
-        translated = translate_arena_event(raw)
-        if translated is None:
+        kind, seq, d = raw["type"], raw["seq"], raw.get("data", {})
+        if kind in ("llm_call", "beliefs", "quest_votes", "team_votes"):
+            if kind == "team_votes":
+                pending_votes = {str(i): bool(v) for i, v in enumerate(d.get("votes", []))}
+            adapter.feed(raw)
             continue
 
-        # For utterances, try to generate TTS audio
-        if translated["type"] == "utterance":
-            speaker = translated["data"].get("speaker", 0)
-            text = translated["data"].get("text", "")
-            audio_b64 = await get_tts_audio(text, speaker)
-            if audio_b64:
-                translated["audio"] = audio_b64
+        await session.gate()
+        stepped = adapter.feed(raw)
 
-        await session.send(translated)
+        if kind == "game_start":
+            state = adapter.state
+            await session.send("game_start", {"mode": "replay", "file": replay_file, "leader": d.get("quest_leader", 0)}, seq)
+            await session.send("role_reveal", roles_payload(state.roles, adapter.engine.player_sides), seq)
+            await session.send("memory_update", {"players": serialize_memories(adapter.memories)}, seq)
+            continue
 
-        # Delay based on event type
-        if translated["type"] == "utterance":
-            await session.wait_delay(2.5)
-        elif translated["type"] in ("team_proposed", "team_vote_result", "quest_result"):
-            await session.wait_delay(1.5)
-        elif translated["type"] == "game_over":
-            await session.wait_delay(0.5)
-        else:
-            await session.wait_delay(0.8)
+        if kind == "discussion":
+            data = {"turn": d["quest"], "round_num": d["round"], "speaker": d["seat"], "text": d["text"]}
+            await session.send("utterance", data, seq)
+        elif kind == "evil_chat":
+            await session.send("evil_chat", {"turn": d.get("quest", 0), "speaker": d["seat"], "text": d["text"]}, seq)
+        elif kind == "team_proposed":
+            await session.send("team_proposed", {"turn": d["quest"], "round_num": d["round"],
+                                                 "leader": d["leader"], "team": d["team"]}, seq)
+        elif kind == "team_result":
+            await session.send("team_vote_result", {"turn": d["quest"], "round_num": d["round"], "team": d["team"],
+                                                    "votes": pending_votes, "approved": d["approved"]}, seq)
+            pending_votes = {}
+        elif kind == "quest_result":
+            await session.send("quest_result", {"turn": d["quest"], "team": d["team"],
+                                                "success": d["succeeded"], "num_fails": d["num_fails"]}, seq)
+        elif kind == "assassination":
+            await session.send("assassination", {"assassin": d.get("assassin"), "target": d.get("target"),
+                                                 "hit_merlin": d.get("hit_merlin")}, seq)
+        elif kind == "game_end":
+            winner = "Good" if str(d.get("winner", "")).lower() == "good" else "Evil"
+            await session.send("game_over", {"winner": winner, "reason": d.get("reason", "")}, seq)
 
-    await session.send({"type": "replay_end", "data": {}})
+        if stepped:
+            await session.send("memory_update", {"players": serialize_memories(adapter.memories)}, seq)
+
+        if kind in ("discussion", "evil_chat"):
+            await session.speak(d["seat"], d["text"], seq)
+        elif kind in ("team_proposed", "team_result", "quest_result"):
+            await session.sleep(1.6)
+
+    await session.send("replay_end", {"violations": adapter.state.violations if adapter.state else []})
 
 
-# ── Live mode ────────────────────────────────────────────────────────
+# ── Live ─────────────────────────────────────────────────────────────
 
-async def run_live_game(session: GameSession):
-    """Runs a real game with HeuristicAgents, streaming every event."""
+async def run_live_game(session: GameSession) -> None:
     agents = {
-        i: HeuristicAgent(i, Role.LOYAL_SERVANT, condition="rule_graph", seed=i)
+        i: HeuristicAgent(i, Role.LOYAL_SERVANT, condition="rule_graph", seed=None, merlin_graph=True)
         for i in range(5)
     }
+    runner: Optional[AvalonGameRunner] = None
+    started = False
 
-    tts = HiggsTTSClient(play_audio=False)
-    seq_counter = [0]
-
-    async def on_event(event_type: str, data: Dict[str, Any], recipients: List[int]):
-        if session.cancelled:
+    async def announce_start() -> None:
+        nonlocal started
+        if started:
             return
-        seq_counter[0] += 1
-        seq = seq_counter[0]
+        started = True
+        engine = runner.engine
+        await session.send("game_start", {"mode": "live", "leader": engine.leader})
+        await session.send("role_reveal", roles_payload(engine.player_roles, engine.player_sides))
 
-        msg = serialize_event(event_type, data, seq)
+    def memories():
+        return {p: a.memory for p, a in agents.items() if a.memory is not None}
 
-        # Generate TTS for utterances and evil chat
+    async def on_event(event_type: str, data: Dict[str, Any], recipients: List[int]) -> None:
+        await announce_start()
+        await session.gate()
+        seq = int(data.pop("seq", 0))
         if event_type in ("utterance", "evil_chat"):
-            speaker = data.get("speaker", 0)
-            text = data.get("text", "")
-            audio_b64 = await get_tts_audio(text, speaker)
-            if audio_b64:
-                msg["audio"] = audio_b64
-
-            # Notify frontend this player is speaking
-            await session.send(serialize_event("speaking", {"seat": speaker, "active": True}, seq))
-
-        await session.send(msg)
-
-        if event_type in ("utterance", "evil_chat"):
-            speaker = data.get("speaker", 0)
-            await session.wait_delay(2.0)
-            await session.send(serialize_event("speaking", {"seat": speaker, "active": False}, seq))
+            await session.send(event_type, data, seq)
+            await session.speak(data["speaker"], data["text"], seq)
         elif event_type in ("team_proposed", "team_vote_result", "quest_result"):
-            await session.wait_delay(1.5)
+            data["votes"] = {str(p): v for p, v in data.get("votes", {}).items()}
+            await session.send(event_type, data, seq)
+            await session.send("memory_update", {"players": serialize_memories(memories())}, seq)
+            await session.sleep(1.6)
+        elif event_type == "assassination":
+            await session.send("assassination", data, seq)
+            await session.sleep(2.0)
 
     runner = AvalonGameRunner(agents=agents, tts_client=None, verbose=False, on_event=on_event)
-
-    await session.send({"type": "game_starting", "data": {"mode": "live"}})
-
-    try:
-        metrics = await runner.run_game()
-
-        # Send final state with roles revealed
-        roles_revealed = {
-            str(seat): {"role": ROLE_NAMES[role], "side": "Good" if runner.engine.player_sides[seat] else "Evil"}
-            for seat, role in runner.engine.player_roles.items()
-        }
-        await session.send(serialize_event("roles_revealed", {
-            "roles": roles_revealed,
-            "good_victory": metrics.good_victory,
-            "win_reason": metrics.win_reason,
-        }, seq_counter[0] + 1))
-
-    except Exception as e:
-        await session.send({"type": "error", "data": {"message": str(e)}})
-
-
-# ── Realtime voice proxy ─────────────────────────────────────────────
-
-@app.websocket("/ws/realtime/{seat}")
-async def realtime_proxy(ws: WebSocket, seat: int):
-    """Proxies audio between browser and Higgs Realtime for a seat's voice."""
-    await ws.accept()
-
-    try:
-        token_data = await mint_realtime_token()
-    except Exception as e:
-        await ws.send_json({"type": "error", "data": {"message": str(e)}})
-        await ws.close()
-        return
-
-    import websockets  # noqa: E402
-
-    token = token_data["value"]
-    subprotocols = ["realtime", f"bai-client-secret.{token}"]
-
-    try:
-        async with websockets.connect(
-            "wss://api.boson.ai/v1/realtime/",
-            subprotocols=subprotocols,
-        ) as higgs_ws:
-            # Send session config
-            config = build_realtime_session_config(seat)
-            await higgs_ws.send(json.dumps(config))
-
-            async def browser_to_higgs():
-                try:
-                    while True:
-                        data = await ws.receive_bytes()
-                        await higgs_ws.send(data)
-                except WebSocketDisconnect:
-                    pass
-
-            async def higgs_to_browser():
-                try:
-                    async for msg in higgs_ws:
-                        if isinstance(msg, bytes):
-                            await ws.send_bytes(msg)
-                        else:
-                            await ws.send_text(msg)
-                except Exception:
-                    pass
-
-            await asyncio.gather(browser_to_higgs(), higgs_to_browser())
-
-    except Exception as e:
-        await ws.send_json({"type": "error", "data": {"message": str(e)}})
-    finally:
-        try:
-            await ws.close()
-        except Exception:
-            pass
+    metrics = await runner.run_game()
+    await session.send("memory_update", {"players": serialize_memories(memories())}, runner.seq + 1)
+    await session.send("game_over", {
+        "winner": "Good" if metrics.good_victory else "Evil",
+        "reason": metrics.win_reason,
+    }, runner.seq + 1)
 
 
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run("server.ws_server:app", host="0.0.0.0", port=8000, reload=True)
+    uvicorn.run("server.ws_server:app", host="0.0.0.0", port=8000)

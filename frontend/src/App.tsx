@@ -1,244 +1,260 @@
-import { useCallback, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import GameTable from "./components/GameTable";
 import QuestTracker from "./components/QuestTracker";
 import VoteOverlay from "./components/VoteOverlay";
 import ChatLog from "./components/ChatLog";
 import PhaseIndicator from "./components/PhaseIndicator";
 import GameControls from "./components/GameControls";
+import KnowledgeGraphView from "./components/KnowledgeGraphView";
 import { BeliefPanel } from "./components/BeliefPanel";
 import { useGameSocket } from "./hooks/useGameSocket";
 import { useAudio } from "./hooks/useAudio";
-import { useLiveKit } from "./hooks/useLiveKit";
-import { SEAT_NAMES } from "./types";
+import { useLiveKit, type AvatarStatus } from "./hooks/useLiveKit";
+import { seatName } from "./types";
+
+type View = "table" | "graphs";
+
+const AVATAR_LABEL: Record<AvatarStatus, string> = {
+  checking: "Avatars…",
+  unavailable: "Avatars unavailable",
+  idle: "Start avatars",
+  starting: "Starting avatars…",
+  connected: "Avatars live",
+  error: "Avatars: retry",
+};
+
+function TopButton({ children, onClick, active = false, disabled = false, title }: {
+  children: React.ReactNode;
+  onClick: () => void;
+  active?: boolean;
+  disabled?: boolean;
+  title?: string;
+}) {
+  return (
+    <button
+      onClick={onClick}
+      disabled={disabled}
+      title={title}
+      className={`rounded-full border px-3.5 py-1.5 font-body text-xs transition-all duration-300 ease-fluid active:scale-[0.97] disabled:cursor-not-allowed disabled:opacity-50 ${
+        active
+          ? "border-medieval-gold/50 bg-medieval-gold/10 text-medieval-gold"
+          : "border-medieval-border bg-medieval-darker text-medieval-parchment-dim hover:border-medieval-gold/30 hover:text-medieval-gold"
+      }`}
+    >
+      {children}
+    </button>
+  );
+}
 
 export default function App() {
+  const [view, setView] = useState<View>("table");
   const [showRoles, setShowRoles] = useState(false);
   const [speed, setSpeedLocal] = useState(1);
   const [isPlaying, setIsPlaying] = useState(false);
+  const [voiceOn, setVoiceOn] = useState(true);
 
-  const { playAudioChunk, audioLevels, isSpeaking, setMuted, isMuted } = useAudio();
+  const audio = useAudio();
   const livekit = useLiveKit();
+  const { gameState, isConnected, startGame, pause, resume, step, setSpeed, setVoice, availableGames } =
+    useGameSocket("/ws/game", audio.playAudio);
 
-  const onAudioChunk = useCallback(
-    (seat: number, data: string) => {
-      playAudioChunk(seat, data);
-    },
-    [playAudioChunk]
-  );
-
-  const {
-    gameState,
-    isConnected,
-    startGame,
-    pause,
-    resume,
-    step,
-    setSpeed,
-    availableGames,
-  } = useGameSocket("/ws/game", onAudioChunk);
-
-  const players = useMemo(
-    () =>
-      gameState.players.map((p) => ({
-        ...p,
-        isSpeaking: isSpeaking[p.seat] ?? p.isSpeaking,
-        audioLevel: audioLevels[p.seat] ?? p.audioLevel,
-      })),
-    [gameState.players, isSpeaking, audioLevels]
-  );
-
-  const currentSpeaker = useMemo(() => {
-    const speaking = players.find((p) => p.isSpeaking);
-    return speaking?.seat ?? null;
-  }, [players]);
+  const levels = useMemo(() => ({ ...audio.levels, ...livekit.levels }), [audio.levels, livekit.levels]);
 
   const phaseDetails = useMemo(() => {
-    const { phase, leader, turn, roundNum, currentProposal } = gameState;
+    const { phase, leader, turn, roundNum, currentProposal, mode } = gameState;
     switch (phase) {
       case "waiting":
-        return isConnected
-          ? "Connect to a game or load a replay"
-          : "Connecting to server…";
+        return isConnected ? "Start a live game or watch a recorded one below" : "Connecting to the game server…";
       case "team_selection":
-        return `Quest ${turn + 1} · Round ${roundNum + 1} · ${SEAT_NAMES[leader]} is the leader`;
+        return `Quest ${turn + 1} · Proposal ${roundNum + 1} · ${seatName(leader)} leads${mode === "replay" ? " · replay" : ""}`;
       case "team_voting":
         return currentProposal
-          ? `Voting on [${currentProposal.team.join(", ")}] proposed by ${SEAT_NAMES[currentProposal.leader]}`
-          : "Votes in progress";
+          ? `Quest ${currentProposal.quest} · voting on ${currentProposal.team.map(seatName).join(", ")}`
+          : "Voting";
       case "quest_voting":
-        return `Quest ${turn + 1} — team members casting quest votes`;
+        return `Quest ${turn + 1} · the team plays its cards`;
       case "assassination":
-        return "Good won 3 quests — the Assassin hunts for Merlin";
+        return "Good won three quests · the Assassin hunts for Merlin";
       case "game_over": {
-        const lastEvent = gameState.events[gameState.events.length - 1];
-        if (lastEvent?.type === "game_over") {
-          return `${lastEvent.winner === "good" ? "Good" : "Evil"} wins — ${lastEvent.reason}`;
-        }
-        return "Game complete";
+        const end = gameState.events.find((e) => e.type === "game_over");
+        return end?.type === "game_over" ? end.reason : "Game complete";
       }
-      default:
-        return "";
     }
   }, [gameState, isConnected]);
 
-  const lastQuestResult = useMemo(() => {
-    const completed = gameState.quests.filter((q) => q !== null);
-    if (completed.length === 0) return null;
-    const last = completed[completed.length - 1]!;
-    return { success: last.success, numFails: last.numFails };
-  }, [gameState.quests]);
-
   const winner = useMemo(() => {
-    const lastEvent = gameState.events[gameState.events.length - 1];
-    if (lastEvent?.type === "game_over") return lastEvent.winner;
-    return null;
+    const end = gameState.events.find((e) => e.type === "game_over");
+    return end?.type === "game_over" ? end.winner : null;
   }, [gameState.events]);
 
+  const currentSpeaker = gameState.players.find((p) => p.isSpeaking)?.seat ?? null;
+  const playing = isPlaying && !gameState.finished;
+
   const handlePlayPause = useCallback(() => {
-    if (isPlaying) {
+    if (playing) {
       pause();
       setIsPlaying(false);
     } else {
       resume();
       setIsPlaying(true);
     }
-  }, [isPlaying, pause, resume]);
+  }, [playing, pause, resume]);
 
-  const handleSpeedChange = useCallback(
-    (s: number) => {
-      setSpeedLocal(s);
-      setSpeed(s);
-    },
-    [setSpeed]
-  );
-
-  const handleNewGame = useCallback(() => {
-    if (livekit.available && !livekit.connected) {
-      livekit.connect();
-    }
-    startGame("live");
-    setIsPlaying(true);
-  }, [startGame, livekit]);
-
-  const handleLoadReplay = useCallback(
-    (file: string) => {
-      startGame("replay", file);
+  const begin = useCallback(
+    (mode: "live" | "replay", file?: string) => {
+      audio.unlock();
+      startGame(mode, file);
+      setSpeed(speed);
+      setVoice(voiceOn);
       setIsPlaying(true);
     },
-    [startGame]
+    [audio, startGame, setSpeed, setVoice, speed, voiceOn]
   );
 
-  const progress = useMemo(() => {
-    const totalEvents = gameState.events.length;
-    return {
-      current: totalEvents,
-      total: totalEvents,
-      quest: gameState.turn + 1,
-      round: gameState.roundNum + 1,
-    };
-  }, [gameState.events.length, gameState.turn, gameState.roundNum]);
+  const [autoplayed, setAutoplayed] = useState(false);
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const auto = params.get("autoplay");
+    if (autoplayed || !isConnected || !auto) return;
+    if (auto === "replay" && availableGames.length === 0) return;
+    setAutoplayed(true);
+    const v = params.get("view");
+    if (v === "graphs" || v === "table") setView(v);
+    if (params.get("roles") === "1") setShowRoles(true);
+    const s = Number(params.get("speed"));
+    if (s > 0) setSpeedLocal(s);
+    startGame(auto === "live" ? "live" : "replay", params.get("file") ?? availableGames[0]);
+    if (s > 0) setSpeed(s);
+    setVoice(params.get("voice") !== "0" && voiceOn);
+    setIsPlaying(true);
+  }, [autoplayed, isConnected, availableGames, startGame, setSpeed, setVoice, voiceOn]);
+
+  const toggleMute = useCallback(() => {
+    audio.setMuted(!audio.isMuted);
+    livekit.setMuted(!audio.isMuted);
+  }, [audio, livekit]);
+
+  const hasGame = gameState.mode !== null;
+  const status = hasGame
+    ? `${gameState.mode === "replay" ? "Replay" : "Live"} · ${gameState.events.length} events${gameState.finished ? " · finished" : ""}`
+    : "";
 
   return (
-    <div
-      className="min-h-[100dvh] flex flex-col"
-      style={{
-        background:
-          "radial-gradient(ellipse at 50% 30%, rgba(30, 25, 50, 0.4) 0%, #0a0a0f 60%)",
-      }}
-    >
-      {/* Phase banner */}
-      <div className="shrink-0 animate-fade-up">
-        <PhaseIndicator
-          phase={gameState.phase}
-          details={phaseDetails}
-          winner={winner}
-        />
-      </div>
-
-      {/* Main content grid */}
-      <div className="flex-1 w-full max-w-[1440px] mx-auto px-4 md:px-6 py-4 grid grid-cols-1 md:grid-cols-[280px_1fr_320px] gap-4 md:gap-5 min-h-0">
-        {/* Left column — Quest Tracker + Belief Graph */}
-        <div className="flex flex-col gap-4 min-h-0 order-2 md:order-1 overflow-visible">
-          <div className="animate-fade-up" style={{ animationDelay: "100ms" }}>
-            <QuestTracker
-              quests={gameState.quests}
-              currentQuest={gameState.turn + 1}
-            />
-          </div>
-
-          <div className="animate-fade-up" style={{ animationDelay: "200ms" }}>
-            <BeliefPanel
-              beliefs={gameState.beliefs}
-              quests={gameState.quests}
-            />
-          </div>
-
-          {/* Audio / reveal controls */}
-          <div className="animate-fade-up flex gap-2" style={{ animationDelay: "300ms" }}>
-            <button
-              onClick={() => setMuted(!isMuted)}
-              className="flex-1 rounded-xl border border-medieval-border bg-medieval-darker px-3 py-2 text-xs font-body text-medieval-parchment-dim transition-all duration-300 ease-[cubic-bezier(0.32,0.72,0,1)] hover:border-medieval-gold/30 hover:text-medieval-gold active:scale-[0.97]"
-            >
-              {isMuted ? "Unmute Audio" : "Mute Audio"}
-            </button>
-            <button
-              onClick={() => setShowRoles(!showRoles)}
-              className="flex-1 rounded-xl border border-medieval-border bg-medieval-darker px-3 py-2 text-xs font-body text-medieval-parchment-dim transition-all duration-300 ease-[cubic-bezier(0.32,0.72,0,1)] hover:border-medieval-gold/30 hover:text-medieval-gold active:scale-[0.97]"
-            >
-              {showRoles ? "Hide Roles" : "Reveal Roles"}
-            </button>
+    <div className="flex min-h-[100dvh] flex-col" style={{ background: "radial-gradient(ellipse at 50% 20%, rgba(40, 32, 64, 0.45) 0%, #0a0a0f 60%)" }}>
+      <header className="flex flex-wrap items-center justify-between gap-3 border-b border-medieval-border/50 px-6 py-3">
+        <div className="flex items-center gap-3">
+          <img src="/crest.webp" alt="" className="h-9 w-9 object-contain" />
+          <div>
+            <div className="font-display text-base font-semibold tracking-[0.18em] text-medieval-gold">AVALON</div>
+            <div className="font-body text-[10px] uppercase tracking-[0.2em] text-medieval-silver/70">AI spectator table</div>
           </div>
         </div>
 
-        {/* Center — Game Table + Vote Overlay */}
-        <div className="flex flex-col items-center justify-center min-h-0 order-1 md:order-2">
-          <div
-            className="w-full max-w-[640px] animate-fade-up relative"
-            style={{ animationDelay: "50ms" }}
+        <div className="flex rounded-full border border-medieval-border bg-medieval-darker p-1">
+          {(["table", "graphs"] as View[]).map((v) => (
+            <button
+              key={v}
+              onClick={() => setView(v)}
+              className={`rounded-full px-4 py-1.5 font-body text-xs transition-all duration-300 ${
+                view === v ? "bg-medieval-gold/15 text-medieval-gold" : "text-medieval-silver hover:text-medieval-parchment"
+              }`}
+            >
+              {v === "table" ? "Round Table" : "Knowledge graphs"}
+            </button>
+          ))}
+        </div>
+
+        <div className="flex items-center gap-2">
+          <span className="mr-1 flex items-center gap-1.5 font-body text-[11px] text-medieval-silver">
+            <span className={`h-2 w-2 rounded-full ${isConnected ? "bg-medieval-good" : "bg-medieval-crimson-bright"}`} />
+            {isConnected ? "Server" : "Offline"}
+          </span>
+          <TopButton
+            onClick={livekit.status === "connected" ? livekit.stop : livekit.start}
+            active={livekit.status === "connected"}
+            disabled={livekit.status === "unavailable" || livekit.status === "starting" || livekit.status === "checking"}
+            title={livekit.message || "Higgs talking-head avatars over LiveKit"}
           >
-            <GameTable
-              players={players}
-              leader={gameState.leader}
-              proposal={gameState.currentProposal}
-              showRoles={showRoles}
-              seatVideos={livekit.connected ? livekit.seatVideos : undefined}
-            />
-            <div className="absolute inset-0 pointer-events-none flex items-center justify-center z-20">
-              <VoteOverlay
-                proposal={gameState.currentProposal}
-                phase={gameState.phase}
-                questResult={lastQuestResult}
-              />
+            {AVATAR_LABEL[livekit.status]}
+          </TopButton>
+          <TopButton onClick={() => setShowRoles(!showRoles)} active={showRoles} disabled={!gameState.rolesKnown} title="Spectators only: the players never see this">
+            {showRoles ? "Hide roles" : "Reveal roles"}
+          </TopButton>
+          <TopButton onClick={toggleMute} active={audio.isMuted}>
+            {audio.isMuted ? "Unmute" : "Mute"}
+          </TopButton>
+        </div>
+      </header>
+
+      <PhaseIndicator phase={gameState.phase} details={phaseDetails} winner={winner} />
+
+      {(gameState.error || livekit.message || gameState.violations.length > 0) && (
+        <div className="mx-auto mt-3 flex w-full max-w-[1500px] flex-col gap-1 px-6 font-body text-xs">
+          {gameState.error && <div className="rounded-lg border border-medieval-crimson-bright/40 bg-[#2a0d0d] px-3 py-2 text-[#f08a8a]">{gameState.error}</div>}
+          {livekit.message && <div className="rounded-lg border border-[#e0a83a]/30 bg-[#2a210d] px-3 py-2 text-[#e0c08a]">{livekit.message}</div>}
+          {gameState.violations.length > 0 && (
+            <div className="rounded-lg border border-[#e0a83a]/30 bg-[#2a210d] px-3 py-2 text-[#e0c08a]">
+              Rule violations in the recorded game: {gameState.violations.join("; ")}
             </div>
-          </div>
+          )}
         </div>
+      )}
 
-        {/* Right column — Chat Log */}
-        <div
-          className="min-h-0 order-3 rounded-[1.25rem] border border-medieval-border bg-medieval-darker overflow-hidden flex flex-col animate-fade-up"
-          style={{
-            animationDelay: "150ms",
-            maxHeight: "calc(100dvh - 180px)",
-          }}
-        >
+      <main
+        className={`mx-auto grid min-h-0 w-full max-w-[1500px] flex-1 grid-cols-1 gap-5 px-6 py-5 ${
+          view === "table" ? "lg:grid-cols-[300px_minmax(0,1fr)_340px]" : "lg:grid-cols-[minmax(0,1fr)_340px]"
+        }`}
+      >
+        {view === "table" ? (
+          <>
+            <aside className="order-2 flex flex-col gap-4 lg:order-1">
+              <QuestTracker quests={gameState.quests} currentQuest={gameState.turn + 1} />
+              <BeliefPanel memory={gameState.memory} history={gameState.beliefHistory} quests={gameState.quests} />
+            </aside>
+            <section className="order-1 flex items-center justify-center lg:order-2">
+              <GameTable
+                players={gameState.players}
+                leader={gameState.leader}
+                proposal={gameState.currentProposal}
+                showRoles={showRoles}
+                seatVideos={livekit.seatVideos}
+                levels={levels}
+              >
+                <VoteOverlay events={gameState.events} />
+              </GameTable>
+            </section>
+          </>
+        ) : (
+          <section className="flex flex-col gap-4">
+            <KnowledgeGraphView memory={gameState.memory} players={gameState.players} showRoles={showRoles} />
+          </section>
+        )}
+
+        <aside className="order-3 flex max-h-[calc(100dvh-210px)] min-h-[420px] flex-col overflow-hidden rounded-2xl border border-medieval-border bg-medieval-darker">
           <ChatLog events={gameState.events} currentSpeaker={currentSpeaker} />
-        </div>
-      </div>
+        </aside>
+      </main>
 
-      {/* Bottom controls */}
-      <div className="shrink-0 animate-fade-up" style={{ animationDelay: "250ms" }}>
-        <GameControls
-          isPlaying={isPlaying}
-          speed={speed}
-          onPlayPause={handlePlayPause}
-          onStep={step}
-          onSpeedChange={handleSpeedChange}
-          onNewGame={handleNewGame}
-          onLoadReplay={handleLoadReplay}
-          progress={progress}
-          availableReplays={availableGames}
-        />
-      </div>
+      <GameControls
+        isPlaying={playing}
+        hasGame={hasGame && !gameState.finished}
+        speed={speed}
+        voiceOn={voiceOn}
+        onPlayPause={handlePlayPause}
+        onStep={step}
+        onSpeedChange={(s) => {
+          setSpeedLocal(s);
+          setSpeed(s);
+        }}
+        onVoiceToggle={() => {
+          setVoiceOn(!voiceOn);
+          setVoice(!voiceOn);
+        }}
+        onNewGame={() => begin("live")}
+        onLoadReplay={(file) => begin("replay", file)}
+        status={status}
+        availableReplays={availableGames}
+      />
     </div>
   );
 }
