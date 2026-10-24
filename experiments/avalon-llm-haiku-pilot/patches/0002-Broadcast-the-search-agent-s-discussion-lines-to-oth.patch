@@ -1,0 +1,82 @@
+From 867d6a6377b8b526cddae0f47e70e50247179015 Mon Sep 17 00:00:00 2001
+From: Cosmo <forhchs@gmail.com>
+Date: Fri, 23 Oct 2026 21:03:26 -0400
+Subject: [PATCH 2/2] Broadcast the search agent's discussion lines to other
+ players
+
+The search agent produces its speech with its planner instead of
+session.action(receiver="all"), so its lines went into the shared
+dialogue record but never into the other players' conversations: LLM
+players never heard it. Inject the line into every other player's
+history the same way the proxy broadcasts LLM speech.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01U1d3PHHyK6qXqb43QY1Yf6
+---
+ .../tasks/avalon/agents/search_agent.py       | 19 +++++++++++++++-
+ tests/arena/test_game_fake.py                 | 22 +++++++++++++++++++
+ 2 files changed, 40 insertions(+), 1 deletion(-)
+
+diff --git a/src/server/tasks/avalon/agents/search_agent.py b/src/server/tasks/avalon/agents/search_agent.py
+index 4167750..29d4f3f 100644
+--- a/src/server/tasks/avalon/agents/search_agent.py
++++ b/src/server/tasks/avalon/agents/search_agent.py
+@@ -193,7 +193,24 @@ class SearchlightLLMAgentWithDiscussion(LLMAgentWithDiscussion):
+         Team discussion
+         """
+         # the planner is synchronous (search + LLM calls), so keep it off the event loop
+-        return await asyncio.to_thread(_run_planner, self._team_discussion, env, dialogue_history)
++        utterance = await asyncio.to_thread(_run_planner, self._team_discussion, env, dialogue_history)
++        self._broadcast(utterance)
++        return utterance
++
++    def _broadcast(self, message: str):
++        r"""Send this agent's speech to every other player, as LLM agents do with `receiver="all"`.
++
++        The planner produces the utterance itself rather than through `session.action`, so without
++        this the other players never hear it.
++        """
++        proxy = self.session.proxy
++        line = proxy.conversation_template.format(agent_name=proxy.agent_names[self.id], message=message)
++        for idx in range(proxy.num_agents):
++            if idx == self.id:
++                continue
++            proxy.set_current_agent(idx)
++            proxy.session.inject({"role": "user", "content": line})
++        proxy.set_current_agent(self.id)
+ 
+     def _team_discussion(self, env, dialogue_history):
+         # history = kwargs.pop("history", "")
+diff --git a/tests/arena/test_game_fake.py b/tests/arena/test_game_fake.py
+index bf6c3c2..f2512ef 100644
+--- a/tests/arena/test_game_fake.py
++++ b/tests/arena/test_game_fake.py
+@@ -52,3 +52,25 @@ def test_discussion_lines_are_labelled_with_0_based_seats(tmp_path):
+     labels = [int(n) for e in read_events(game_path(run_dir, 0)) if e["type"] == "llm_call"
+               for n in re.findall(r"Player (\d+) says:", e["data"]["prompt"])]
+     assert labels and set(labels) <= set(range(5)) and 0 in labels
++
++
++def test_every_seat_is_heard_in_discussion(tmp_path, monkeypatch):
++    r"""Each speech must reach the other players' conversations, including the search agent's.
++
++    Regression: the search agent's planner-made speeches were never broadcast, so it was mute.
++    """
++    from src.arena.backends import FakeBackend
++
++    counter = iter(range(10**6))
++    monkeypatch.setattr(FakeBackend, "respond", lambda self, last: f"line-{next(counter)} from someone")
++    run_dir = str(tmp_path / "run")
++    asyncio.run(run(fake_cfg(num_games=1), run_dir, log_fn=lambda *_: None))
++    events = read_events(game_path(run_dir, 0))
++    prompts = [e["data"]["prompt"] for e in events if e["type"] == "llm_call"]
++    speeches = [e["data"] for e in events if e["type"] == "discussion"]
++    search_seat = next(s["seat"] for s in events[0]["data"]["seats"] if s["agent"] == "search")
++    for seat in range(5):
++        lines = [d["text"] for d in speeches if d["seat"] == seat]
++        assert lines, f"seat {seat} never spoke"
++        assert any(f"Player {seat} says:\n{t}" in p for t in lines for p in prompts), \
++            f"seat {seat}{' (search)' if seat == search_seat else ''} was never heard"
+-- 
+2.34.1
+

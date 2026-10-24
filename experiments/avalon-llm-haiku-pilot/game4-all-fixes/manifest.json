@@ -1,0 +1,85 @@
+{
+  "run_id": "game4-all-fixes",
+  "created_at": 1792803842.4275923,
+  "config_hash": "274b341713df5ba3",
+  "git_sha": "9a0dd43d6f6603b913f0ed243d1dbf18afe4c5b5",
+  "git_dirty": false,
+  "config": {
+    "num_players": 5,
+    "seats": [
+      {
+        "agent": "search",
+        "provider": "claude_cli",
+        "model": "haiku",
+        "effort": "low",
+        "planner_model": null,
+        "planner_num_rollout": 100,
+        "planner_node_budget": 100,
+        "name": "search:haiku#0"
+      },
+      {
+        "agent": "llm",
+        "provider": "claude_cli",
+        "model": "haiku",
+        "effort": "low",
+        "planner_model": null,
+        "planner_num_rollout": 100,
+        "planner_node_budget": 100,
+        "name": "llm:haiku#1"
+      },
+      {
+        "agent": "llm",
+        "provider": "claude_cli",
+        "model": "haiku",
+        "effort": "low",
+        "planner_model": null,
+        "planner_num_rollout": 100,
+        "planner_node_budget": 100,
+        "name": "llm:haiku#2"
+      },
+      {
+        "agent": "llm",
+        "provider": "claude_cli",
+        "model": "haiku",
+        "effort": "low",
+        "planner_model": null,
+        "planner_num_rollout": 100,
+        "planner_node_budget": 100,
+        "name": "llm:haiku#3"
+      },
+      {
+        "agent": "llm",
+        "provider": "claude_cli",
+        "model": "haiku",
+        "effort": "low",
+        "planner_model": null,
+        "planner_num_rollout": 100,
+        "planner_node_budget": 100,
+        "name": "llm:haiku#4"
+      }
+    ],
+    "roles": [
+      "Merlin",
+      "Servant",
+      "Servant",
+      "Assassin",
+      "Minion"
+    ],
+    "num_games": 1,
+    "base_seed": 0,
+    "shuffle_roles": true,
+    "shuffle_seats": true,
+    "random_leader": true,
+    "discussion": true,
+    "reply_max_words": 40,
+    "concurrency": 1,
+    "max_game_retries": 2,
+    "llm_max_retries": 5,
+    "llm_timeout_s": 180.0,
+    "claude_bin": null,
+    "cli_max_parallel": 2,
+    "api_max_tokens": 16000,
+    "backoff_base_s": 2.0,
+    "backoff_max_s": 60.0
+  }
+}
