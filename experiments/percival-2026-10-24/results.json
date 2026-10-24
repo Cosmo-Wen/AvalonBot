@@ -1,0 +1,507 @@
+{
+  "implementation_commit": "a5abbbff5aa77f502019c1a16992aded19985b8c",
+  "model": "gpt-6.1-sol",
+  "reasoning_effort": "medium",
+  "completed_games_only": true,
+  "batches": {
+    "p0": {
+      "completed_games": 3,
+      "aggregate": {
+        "chat_only": {
+          "games": 3,
+          "good_wins": 2,
+          "good_win_rate": 0.6666666666666666,
+          "assassinations": 3,
+          "assassin_hits": 1,
+          "assassin_accuracy": 0.3333333333333333,
+          "merlin_mean_vote_accuracy_rank": 1.8333333333333333,
+          "merlin_rank_games": 3,
+          "merlin_vote_rank_counts": {
+            "1.5": 1,
+            "2.0": 2
+          },
+          "mean_p_true_merlin": 0.9049999999999999,
+          "belief_games": 3,
+          "quests": 11,
+          "quests_passed": 9,
+          "quest_success_rate": 0.8181818181818182
+        }
+      },
+      "games": [
+        {
+          "game_idx": 0,
+          "seed": [
+            0,
+            0
+          ],
+          "roles": {
+            "0": "Merlin",
+            "1": "Assassin",
+            "2": "Servant",
+            "3": "Percival",
+            "4": "Morgana"
+          },
+          "winner": "evil",
+          "reason": "assassination",
+          "quest_results": [
+            false,
+            false,
+            true,
+            true,
+            true
+          ],
+          "metrics": {
+            "vote_accuracy": {
+              "0": 0.875,
+              "2": 0.625,
+              "3": 0.875
+            },
+            "merlin_vote_accuracy_rank": 1.5,
+            "vote_count": 8,
+            "assassination_reached": true,
+            "assassin_hit": true,
+            "percival_seat": 3,
+            "p_merlin": {
+              "0": 0.995,
+              "4": 0.005
+            },
+            "p_true_merlin": 0.995
+          },
+          "assassination": {
+            "assassin": 1,
+            "target": 0,
+            "hit_merlin": true
+          },
+          "evil_chat": [
+            {
+              "quest": 5,
+              "seat": 4,
+              "text": "I think Player 0 is Merlin: they pushed for 0,2,3 early and rejected 0,2,4 despite being on it, consistently steering toward the clean trio. Player 3\u2019s suspicion of you follows directly from their own failed quest, so it requires less hidden knowledge.",
+              "recipients": [
+                4,
+                1
+              ]
+            },
+            {
+              "quest": 5,
+              "seat": 1,
+              "text": "I think Player 0 is Merlin: they favored the clean 0,2,3 trio before Quest 2 and rejected 0,2,4 despite being included. Player 2 initially backed the wrong team, while Player 3 could identify me from our failed quest alone.",
+              "recipients": [
+                4,
+                1
+              ]
+            }
+          ]
+        },
+        {
+          "game_idx": 1,
+          "seed": [
+            0,
+            1
+          ],
+          "roles": {
+            "0": "Servant",
+            "1": "Morgana",
+            "2": "Merlin",
+            "3": "Percival",
+            "4": "Assassin"
+          },
+          "winner": "good",
+          "reason": "missions_and_assassin_missed",
+          "quest_results": [
+            true,
+            true,
+            true
+          ],
+          "metrics": {
+            "vote_accuracy": {
+              "0": 1.0,
+              "2": 1.0,
+              "3": 1.0
+            },
+            "merlin_vote_accuracy_rank": 2.0,
+            "vote_count": 4,
+            "assassination_reached": true,
+            "assassin_hit": false,
+            "percival_seat": 3,
+            "p_merlin": {
+              "1": 0.08,
+              "2": 0.92
+            },
+            "p_true_merlin": 0.92
+          },
+          "assassination": {
+            "assassin": 4,
+            "target": 0,
+            "hit_merlin": false
+          },
+          "evil_chat": [
+            {
+              "quest": 3,
+              "seat": 1,
+              "text": "I think P0 is Merlin: they consistently backed all-good teams and resisted P4\u2019s substitution without drawing attention to knowing who was evil. P2 and P3 both challenged my suspicion of P4, which makes P0 the stronger read.",
+              "recipients": [
+                1,
+                4
+              ]
+            },
+            {
+              "quest": 3,
+              "seat": 4,
+              "text": "P0 is my strongest Merlin read: they quietly backed the all-good trio and opposed my substitution when the established pair could win. P2 and P3 drew more attention by repeatedly challenging your suspicion of me.",
+              "recipients": [
+                1,
+                4
+              ]
+            }
+          ]
+        },
+        {
+          "game_idx": 2,
+          "seed": [
+            0,
+            2
+          ],
+          "roles": {
+            "0": "Percival",
+            "1": "Servant",
+            "2": "Assassin",
+            "3": "Morgana",
+            "4": "Merlin"
+          },
+          "winner": "good",
+          "reason": "missions_and_assassin_missed",
+          "quest_results": [
+            true,
+            true,
+            true
+          ],
+          "metrics": {
+            "vote_accuracy": {
+              "0": 1.0,
+              "1": 1.0,
+              "4": 1.0
+            },
+            "merlin_vote_accuracy_rank": 2.0,
+            "vote_count": 3,
+            "assassination_reached": true,
+            "assassin_hit": false,
+            "percival_seat": 0,
+            "p_merlin": {
+              "3": 0.2,
+              "4": 0.8
+            },
+            "p_true_merlin": 0.8
+          },
+          "assassination": {
+            "assassin": 2,
+            "target": 0,
+            "hit_merlin": false
+          },
+          "evil_chat": [
+            {
+              "quest": 3,
+              "seat": 3,
+              "text": "I lean P0 for Merlin: they proposed the all-good three-player team and immediately challenged my unexplained suspicion of P2. P1 is my second choice, but their reasoning mostly followed the successful quests.",
+              "recipients": [
+                3,
+                2
+              ]
+            },
+            {
+              "quest": 3,
+              "seat": 2,
+              "text": "I lean P0 for Merlin: they pushed the all-good trio before it had been tested and challenged your suspicion of me early. P1 is my second choice, while P4 mostly followed the successful teams.",
+              "recipients": [
+                3,
+                2
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    "p1": {
+      "completed_games": 4,
+      "aggregate": {
+        "four_world": {
+          "games": 4,
+          "good_wins": 3,
+          "good_win_rate": 0.75,
+          "assassinations": 4,
+          "assassin_hits": 1,
+          "assassin_accuracy": 0.25,
+          "merlin_mean_vote_accuracy_rank": 1.375,
+          "merlin_rank_games": 4,
+          "merlin_vote_rank_counts": {
+            "1.0": 3,
+            "2.5": 1
+          },
+          "mean_p_true_merlin": 0.987331004253931,
+          "belief_games": 4,
+          "quests": 16,
+          "quests_passed": 12,
+          "quest_success_rate": 0.75
+        }
+      },
+      "games": [
+        {
+          "game_idx": 0,
+          "seed": [
+            0,
+            0
+          ],
+          "roles": {
+            "0": "Merlin",
+            "1": "Assassin",
+            "2": "Servant",
+            "3": "Percival",
+            "4": "Morgana"
+          },
+          "winner": "good",
+          "reason": "missions_and_assassin_missed",
+          "quest_results": [
+            true,
+            false,
+            true,
+            true
+          ],
+          "metrics": {
+            "vote_accuracy": {
+              "0": 1.0,
+              "2": 0.75,
+              "3": 0.75
+            },
+            "merlin_vote_accuracy_rank": 1.0,
+            "vote_count": 8,
+            "assassination_reached": true,
+            "assassin_hit": false,
+            "percival_seat": 3,
+            "p_merlin": {
+              "0": 0.9523809523809522,
+              "4": 0.04761904761904762
+            },
+            "p_true_merlin": 0.9523809523809522
+          },
+          "assassination": {
+            "assassin": 1,
+            "target": 3,
+            "hit_merlin": false
+          },
+          "evil_chat": [
+            {
+              "quest": 4,
+              "seat": 4,
+              "text": "I think P3 is Merlin: they rejected every Q2 team containing either of us and consistently favored P0, P2, and themselves. Their odd rejections of that same good trio may have been deliberate cover.",
+              "recipients": [
+                4,
+                1
+              ]
+            },
+            {
+              "quest": 4,
+              "seat": 1,
+              "text": "I think P3 is Merlin: they rejected every Q2 team containing either of us and consistently steered toward the all-good trio of P0, P2, and P3. Their occasional rejection of that trio looks like cover for knowing too much.",
+              "recipients": [
+                4,
+                1
+              ]
+            }
+          ]
+        },
+        {
+          "game_idx": 1,
+          "seed": [
+            0,
+            1
+          ],
+          "roles": {
+            "0": "Servant",
+            "1": "Morgana",
+            "2": "Merlin",
+            "3": "Percival",
+            "4": "Assassin"
+          },
+          "winner": "evil",
+          "reason": "assassination",
+          "quest_results": [
+            true,
+            true,
+            true
+          ],
+          "metrics": {
+            "vote_accuracy": {
+              "0": 0.5,
+              "2": 1.0,
+              "3": 0.6666666666666666
+            },
+            "merlin_vote_accuracy_rank": 1.0,
+            "vote_count": 6,
+            "assassination_reached": true,
+            "assassin_hit": true,
+            "percival_seat": 3,
+            "p_merlin": {
+              "1": 0.001956947162426615,
+              "2": 0.9980430528375733
+            },
+            "p_true_merlin": 0.9980430528375733
+          },
+          "assassination": {
+            "assassin": 4,
+            "target": 2,
+            "hit_merlin": true
+          },
+          "evil_chat": [
+            {
+              "quest": 3,
+              "seat": 1,
+              "text": "I think P2 is Merlin: they rejected both versions of {0,2,4} and our {1,2,3} team while consistently backing the all-good {0,2,3}. P0 repeatedly approved your inclusion, and P3\u2019s contradictory votes make P2 the strongest target.",
+              "recipients": [
+                1,
+                4
+              ]
+            },
+            {
+              "quest": 3,
+              "seat": 4,
+              "text": "P2 is my strongest Merlin read: they rejected every team containing either of us before the hammer while backing the all-good teams. P0 repeatedly approved my inclusion, and P3\u2019s rejections of clean teams make them less likely.",
+              "recipients": [
+                1,
+                4
+              ]
+            }
+          ]
+        },
+        {
+          "game_idx": 2,
+          "seed": [
+            0,
+            2
+          ],
+          "roles": {
+            "0": "Percival",
+            "1": "Servant",
+            "2": "Assassin",
+            "3": "Morgana",
+            "4": "Merlin"
+          },
+          "winner": "good",
+          "reason": "missions_and_assassin_missed",
+          "quest_results": [
+            true,
+            true,
+            false,
+            true
+          ],
+          "metrics": {
+            "vote_accuracy": {
+              "0": 0.8,
+              "1": 0.7,
+              "4": 1.0
+            },
+            "merlin_vote_accuracy_rank": 1.0,
+            "vote_count": 10,
+            "assassination_reached": true,
+            "assassin_hit": false,
+            "percival_seat": 0,
+            "p_merlin": {
+              "3": 0.0009999982018014356,
+              "4": 0.9990000017981986
+            },
+            "p_true_merlin": 0.9990000017981986
+          },
+          "assassination": {
+            "assassin": 2,
+            "target": 0,
+            "hit_merlin": false
+          },
+          "evil_chat": [
+            {
+              "quest": 4,
+              "seat": 3,
+              "text": "P0 is my strongest Merlin read: they rejected every Quest 2 team containing either of us, even their own proposal, and opposed P1/P2. Their proposals gave me cover while their votes consistently kept evil off quests.",
+              "recipients": [
+                3,
+                2
+              ]
+            },
+            {
+              "quest": 4,
+              "seat": 2,
+              "text": "P0 is my strongest Merlin read: they rejected every Quest 2 lineup containing either of us, including their own proposal, then opposed P1/P2. Their votes suggest knowledge of both evil players, while their proposals helped conceal it.",
+              "recipients": [
+                3,
+                2
+              ]
+            }
+          ]
+        },
+        {
+          "game_idx": 3,
+          "seed": [
+            0,
+            3
+          ],
+          "roles": {
+            "0": "Morgana",
+            "1": "Percival",
+            "2": "Assassin",
+            "3": "Merlin",
+            "4": "Servant"
+          },
+          "winner": "good",
+          "reason": "missions_and_assassin_missed",
+          "quest_results": [
+            false,
+            false,
+            true,
+            true,
+            true
+          ],
+          "metrics": {
+            "vote_accuracy": {
+              "1": 1.0,
+              "3": 0.75,
+              "4": 0.75
+            },
+            "merlin_vote_accuracy_rank": 2.5,
+            "vote_count": 8,
+            "assassination_reached": true,
+            "assassin_hit": false,
+            "percival_seat": 1,
+            "p_merlin": {
+              "0": 9.999000099990027e-05,
+              "3": 0.9999000099990001
+            },
+            "p_true_merlin": 0.9999000099990001
+          },
+          "assassination": {
+            "assassin": 2,
+            "target": 1,
+            "hit_merlin": false
+          },
+          "evil_chat": [
+            {
+              "quest": 5,
+              "seat": 0,
+              "text": "I think P1 is Merlin: they first identified both of us as the evil pair and singled out P2 from the three-person failed quest. Their rejection of the team they had advocated also suggests hidden knowledge they struggled to explain publicly.",
+              "recipients": [
+                0,
+                2
+              ]
+            },
+            {
+              "quest": 5,
+              "seat": 2,
+              "text": "I think P1 is Merlin: they identified us both first and singled me out from the failed three-person quest without a clear public basis. Rejecting the team they had advocated also suggests hidden knowledge they struggled to explain.",
+              "recipients": [
+                0,
+                2
+              ]
+            }
+          ]
+        }
+      ]
+    }
+  }
+}

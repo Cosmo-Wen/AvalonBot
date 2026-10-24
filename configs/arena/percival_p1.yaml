@@ -1,0 +1,19 @@
+# Paired Percival experiment: factors fixed before the run.
+seats:
+  - {provider: codex_cli, model: gpt-6.1-sol, effort: medium}
+  - {provider: codex_cli, model: gpt-6.1-sol, effort: medium}
+  - {provider: codex_cli, model: gpt-6.1-sol, effort: medium}
+  - {provider: codex_cli, model: gpt-6.1-sol, effort: medium}
+  - {provider: codex_cli, model: gpt-6.1-sol, effort: medium}
+roles: [Merlin, Percival, Servant, Assassin, Morgana]
+condition: rule_graph
+percival_condition: four_world
+num_games: 10
+base_seed: 0
+shuffle_roles: true
+shuffle_seats: false
+random_leader: true
+concurrency: 1
+cli_max_parallel: 2
+max_game_retries: 0
+llm_timeout_s: 180

@@ -71,6 +71,19 @@ python -m pytest tests -q
 for the LLM players. Any OpenAI-compatible endpoint works, such as a Boson Marketplace key for
 `gpt-6.1-sol`. Never commit `.env`; git ignores it.
 
+## Codex CLI and Percival experiments
+
+Run `codex login` to use your ChatGPT login, then:
+
+```bash
+python -m arena check --config configs/arena/codex_chat_only.yaml
+python -m arena run --config configs/arena/codex_chat_only.yaml --run-dir runs/codex/chat_only
+```
+
+For Percival and Morgana, use `configs/arena/percival_p0.yaml` (chat-only Percival) or
+`configs/arena/percival_p1.yaml` (four-world beliefs). Both default to 10 games at medium reasoning.
+See the [experiment analysis and results](experiments/percival-2026-10-24/README.md).
+
 ## Batch runs (ablation)
 
 `arena/` is a batch runner, vendored from the Avalon-LLM work

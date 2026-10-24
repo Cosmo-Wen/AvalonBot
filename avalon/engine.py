@@ -4,6 +4,7 @@ Core 5-Player Avalon Game Environment.
 Roles:
 - Good (3): Merlin (0), Loyal Servant (1), Loyal Servant (2)
 - Evil (2): Minion of Mordred (3), Assassin (4)
+- Optional lineup: Merlin, Percival, Loyal Servant, Assassin, Morgana.
 
 Quests:
 - 5 Quests with team sizes: [2, 3, 2, 3, 3]
@@ -22,9 +23,13 @@ class Role(IntEnum):
     LOYAL_SERVANT = 1
     MINION = 2
     ASSASSIN = 3
+    PERCIVAL = 4
+    MORGANA = 5
 
 
 ROLE_NAMES = {
+    Role.PERCIVAL: "Percival",
+    Role.MORGANA: "Morgana",
     Role.MERLIN: "Merlin",
     Role.LOYAL_SERVANT: "Loyal Servant",
     Role.MINION: "Minion",
@@ -32,6 +37,8 @@ ROLE_NAMES = {
 }
 
 ROLE_SIDES = {
+    Role.PERCIVAL: True,
+    Role.MORGANA: False,
     Role.MERLIN: True,         # Good
     Role.LOYAL_SERVANT: True,  # Good
     Role.MINION: False,        # Evil
@@ -143,6 +150,15 @@ class AvalonEngine:
             self.rng.shuffle(pool)
             self.player_roles = {i: pool[i] for i in range(self.NUM_PLAYERS)}
 
+        if set(self.player_roles) != set(range(self.NUM_PLAYERS)):
+            raise ValueError("Expected roles for exactly players 0 through 4")
+        role_values = list(self.player_roles.values())
+        if role_values.count(Role.MERLIN) != 1 or role_values.count(Role.ASSASSIN) != 1 or sum(not ROLE_SIDES[r] for r in role_values) != 2:
+            raise ValueError("Expected one Merlin, one Assassin, and exactly two evil roles")
+        if Role.PERCIVAL in role_values or Role.MORGANA in role_values:
+            if sorted(role_values) != sorted([Role.MERLIN, Role.PERCIVAL, Role.LOYAL_SERVANT, Role.ASSASSIN, Role.MORGANA]):
+                raise ValueError("Percival games require Merlin, Percival, Servant, Assassin, Morgana")
+
         self.player_sides = {i: ROLE_SIDES[role] for i, role in self.player_roles.items()}
 
         if preset_leader is not None:
@@ -178,6 +194,8 @@ class AvalonEngine:
         Returns starting private role knowledge for the specified player.
         - Merlin sees who is Evil (both Minion and Assassin).
         - Evil players (Minion & Assassin) see each other.
+        - Percival sees the unlabeled Merlin/Morgana pair.
+        - Morgana and the Assassin see each other.
         - Loyal Servants only know their own identity.
         """
         role = self.player_roles[player]
@@ -200,6 +218,9 @@ class AvalonEngine:
             # Evil sees other evil players
             info["seen_evil"] = [p for p in evil_players if p != player]
 
+        if role == Role.PERCIVAL:
+            info["merlin_candidates"] = sorted(p for p, r in self.player_roles.items() if r in (Role.MERLIN, Role.MORGANA))
+        info["percival_game"] = Role.PERCIVAL in self.player_roles.values()
         return info
 
     def choose_team(self, leader: int, team: List[int]) -> Tuple[Phase, bool]:

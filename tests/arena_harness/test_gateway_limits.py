@@ -61,12 +61,14 @@ def gateway():
     StubGateway.inflight = StubGateway.peak = StubGateway.rejected = StubGateway.served = 0
     yield f"http://127.0.0.1:{server.server_port}/v1"
     server.shutdown()
+    server.server_close()
 
 
 def agents(url, log, n, max_inflight):
     return [LoggedLLMAgent(player_id=i % 5, role=Role.LOYAL_SERVANT, condition="chat_only", api_key="test",
                            base_url=url, model="stub", log=log, max_inflight=max_inflight,
-                           max_retries=8, backoff_base_s=0.01, backoff_max_s=0.05) for i in range(n)]
+                           # Allow the 12-request burst to drain through 3 slots at 50 ms each.
+                           max_retries=8, backoff_base_s=0.03, backoff_max_s=0.2) for i in range(n)]
 
 
 def burst(url, tmp_path, max_inflight, n=12):

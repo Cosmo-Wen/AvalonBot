@@ -36,6 +36,7 @@ class GameMetrics:
     # how each P(evil) update was settled, per Servant: "llm", "llm_retry", or "rule_fallback"
     belief_paths: Dict[int, Dict[str, int]] = field(default_factory=dict)
     assassin_p_merlin: Optional[Dict[int, float]] = None
+    percival_metrics: Optional[Dict[str, Any]] = None
 
 
 class AvalonGameRunner:
@@ -509,6 +510,17 @@ class AvalonGameRunner:
             and self.engine.assassination_target != merlin_id
         )
 
+        percival_metrics = None
+        percival_seat = next((p for p, r in roles.items() if r == Role.PERCIVAL), None)
+        if percival_seat is not None:
+            from .percival_metrics import vote_accuracy_metrics
+            probabilities = await self.agents[percival_seat].final_merlin_beliefs()
+            percival_metrics = {**vote_accuracy_metrics(self.engine),
+                "assassination_reached": self.engine.assassination_target is not None,
+                "assassin_hit": self.engine.assassination_target == merlin_id,
+                "percival_seat": percival_seat, "p_merlin": probabilities,
+                "p_true_merlin": probabilities.get(merlin_id) if probabilities else None}
+
         return GameMetrics(
             good_victory=bool(self.engine.good_victory),
             win_reason=self.engine.win_reason,
@@ -524,4 +536,5 @@ class AvalonGameRunner:
             constraint_resets=constraint_resets,
             belief_paths=belief_paths,
             assassin_p_merlin=assassin_p_merlin,
+            percival_metrics=percival_metrics,
         )

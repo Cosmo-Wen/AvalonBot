@@ -8,12 +8,12 @@ from pydantic import BaseModel, validator, root_validator
 
 NUM_PLAYERS = 5
 # model used when a seat doesn't name one
-DEFAULT_MODELS = {"claude_cli": "sonnet", "anthropic": "claude-opus-5-5", "openai": "gpt-6.1-sol", "fake": "fake"}
+DEFAULT_MODELS = {"codex_cli": "gpt-6.1-sol", "claude_cli": "sonnet", "anthropic": "claude-opus-5-5", "openai": "gpt-6.1-sol", "fake": "fake"}
 VALID_ROLES = {"Merlin", "Percival", "Morgana", "Mordred", "Oberon", "Servant", "Minion", "Assassin"}
 EVIL_ROLES = {"Morgana", "Mordred", "Oberon", "Minion", "Assassin"}
 
 # fields that can change between resumes without affecting game outcomes
-NON_SEMANTIC_FIELDS = {"concurrency", "num_games", "claude_bin", "cli_max_parallel", "llm_timeout_s",
+NON_SEMANTIC_FIELDS = {"concurrency", "num_games", "claude_bin", "codex_bin", "cli_max_parallel", "llm_timeout_s",
                        "max_inflight_requests",
                        "llm_max_retries", "max_game_retries", "backoff_base_s", "backoff_max_s"}
 
@@ -21,10 +21,11 @@ NON_SEMANTIC_FIELDS = {"concurrency", "num_games", "claude_bin", "cli_max_parall
 class SeatSpec(BaseModel):
     r"""One participant in the game. Seat shuffling permutes these across seats."""
     agent: Literal["llm"] = "llm"
+    # codex_cli: Codex login-backed game actions and memory tools.
     # openai: an OpenAI-compatible endpoint (AvalonBot's LLMAgent); fake: AvalonBot's offline
     # HeuristicAgent. claude_cli and anthropic are text-only backends, usable by play functions
     # that don't need tool calls.
-    provider: Literal["claude_cli", "anthropic", "openai", "fake"] = "openai"
+    provider: Literal["codex_cli", "claude_cli", "anthropic", "openai", "fake"] = "openai"
     # claude_cli: a Claude Code alias or id (haiku / sonnet / opus); anthropic: an API model id
     # (the aliases haiku / sonnet / opus also work). Defaults per provider: DEFAULT_MODELS.
     model: Optional[str] = None
@@ -44,14 +45,16 @@ class ArenaConfig(BaseModel):
     random_leader: bool = True
     # AvalonBot condition for the good team; the evil team always plays chat-only (A)
     condition: Literal["chat_only", "belief_graph", "rule_graph"] = "chat_only"
+    percival_condition: Literal["chat_only", "four_world"] = "chat_only"
     play_fn: str = "avalon.arena_play:play_game"  # "module:function" that plays one game
 
     concurrency: int = 1
     max_game_retries: int = 2
     llm_max_retries: int = 5
     llm_timeout_s: float = 180.0
+    codex_bin: Optional[str] = None      # Codex CLI path; uses the existing Codex login
     claude_bin: Optional[str] = None     # path to the Claude Code CLI; defaults to `claude` on PATH
-    cli_max_parallel: int = 2            # max concurrent `claude -p` processes across all games
+    cli_max_parallel: int = 2            # max concurrent Claude / Codex CLI processes across all games
     max_inflight_requests: int = 6       # max concurrent model API requests across all games (gateways cap this)
     api_max_tokens: int = 16000          # anthropic / openai: max output tokens per request
     # openai: any OpenAI-compatible endpoint; the key is read from OPENAI_API_KEY and never logged
@@ -83,6 +86,11 @@ class ArenaConfig(BaseModel):
             raise ValueError(f"expected {n} seats, got {len(values['seats'])}")
         if len(values["roles"]) != n:
             raise ValueError(f"expected {n} roles, got {len(values['roles'])}")
+        if "Percival" in values["roles"] or "Morgana" in values["roles"]:
+            if sorted(values["roles"]) != sorted(["Merlin", "Percival", "Servant", "Assassin", "Morgana"]):
+                raise ValueError("Percival games require Merlin, Percival, Servant, Assassin, Morgana")
+        elif values["percival_condition"] == "four_world":
+            raise ValueError("four_world requires the Percival role set")
         for i, seat in enumerate(values["seats"]):
             if seat.model is None:
                 seat.model = DEFAULT_MODELS[seat.provider]
@@ -95,6 +103,8 @@ class ArenaConfig(BaseModel):
 
     def config_hash(self) -> str:
         semantic = self.dict(exclude=NON_SEMANTIC_FIELDS)
+        if "Percival" not in self.roles:
+            semantic.pop("percival_condition", None)  # preserve hashes of historical A/B/C runs
         blob = json.dumps(semantic, sort_keys=True).encode()
         return hashlib.sha256(blob).hexdigest()[:16]
 

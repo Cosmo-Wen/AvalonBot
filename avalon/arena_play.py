@@ -8,7 +8,7 @@ the log in the arena's event format and, as it happens, fed through `ArenaGraphA
 also yields each player's belief graph (`belief_graphs` at game end), whatever the condition.
 
 Seats: `provider: openai` plays an LLMAgent against an OpenAI-compatible endpoint (OPENAI_API_KEY,
-OPENAI_BASE_URL, and the seat's `model`); `provider: fake` plays the offline HeuristicAgent. The good
+OPENAI_BASE_URL, and the seat's `model`); `provider: codex_cli` uses the Codex login; `provider: fake` plays the offline HeuristicAgent. The good
 team plays `cfg.condition`; the evil team always plays chat-only (A).
 """
 
@@ -21,7 +21,7 @@ from typing import Any, Dict, List, Optional
 
 import aiohttp
 
-from arena.backends import BackendError, FatalBackendError, NotLoggedIn, UsageLimitReached, redact_keys
+from arena.backends import TransientBackendError, BackendError, FatalBackendError, NotLoggedIn, UsageLimitReached, redact_keys
 from arena.config import ArenaConfig
 from arena.events import EventLog
 from arena.seeding import GameSetup
@@ -101,7 +101,7 @@ class LoggedLLMAgent(LLMAgent):
             except Exception as exc:
                 timed_out = isinstance(exc, asyncio.TimeoutError)
                 message = f"request timed out after {self.request_timeout_s}s" if timed_out else redact_keys(str(exc))
-                retryable = timed_out or isinstance(exc, aiohttp.ClientConnectorError) or is_gateway_rejection(message)
+                retryable = isinstance(exc, TransientBackendError) or timed_out or isinstance(exc, aiohttp.ClientConnectorError) or is_gateway_rejection(message)
                 if retryable and attempt < self.max_retries:
                     delay = random.uniform(0, min(self.backoff_max_s, self.backoff_base_s * 2 ** attempt))
                     self.retries += 1
@@ -113,7 +113,7 @@ class LoggedLLMAgent(LLMAgent):
                 self.errors += 1
                 self.log.emit("llm_error", seat=self.player_id, model=self.model, error=message,
                               latency_s=round(time.monotonic() - start, 3))
-                self.fatal = self.fatal or classify_http_error(message)
+                self.fatal = self.fatal or (exc if isinstance(exc, BackendError) else classify_http_error(message))
                 raise
         self.calls += 1
         msg = data["choices"][0]["message"]
@@ -148,21 +148,27 @@ def build_agents(setup: GameSetup, cfg: ArenaConfig, log: EventLog) -> Dict[int,
     agents: Dict[int, Agent] = {}
     for seat, spec in enumerate(setup.seat_specs):
         role = ARENA_ROLES[setup.role_names[seat]]
-        condition = cfg.condition if ROLE_SIDES[role] else "chat_only"
+        condition = cfg.condition if role == Role.LOYAL_SERVANT else "chat_only"
+        if not any(name == "Percival" for name in setup.role_names):
+            condition = cfg.condition if ROLE_SIDES[role] else "chat_only"
         seed = setup.agent_seeds[seat]
         if spec.provider == "fake":
-            agents[seat] = HeuristicAgent(player_id=seat, role=role, condition=condition, seed=seed)
-        elif spec.provider == "openai":
-            if not os.getenv("OPENAI_API_KEY"):
+            agents[seat] = HeuristicAgent(player_id=seat, role=role, condition=condition, seed=seed, percival_condition=cfg.percival_condition)
+        elif spec.provider in ("openai", "codex_cli"):
+            transport = None
+            if spec.provider == "codex_cli":
+                from arena.codex_backend import CodexCLIBackend
+                transport = CodexCLIBackend(spec.model, cfg, spec.effort)
+            if spec.provider == "openai" and not os.getenv("OPENAI_API_KEY"):
                 raise NotLoggedIn("no OpenAI API key: set OPENAI_API_KEY (for example in a local .env file)")
             agents[seat] = LoggedLLMAgent(player_id=seat, role=role, condition=condition, model=spec.model,
-                                          seed=seed, log=log, max_inflight=cfg.max_inflight_requests,
+                                          seed=seed, log=log, transport=transport, percival_condition=cfg.percival_condition, max_inflight=cfg.max_inflight_requests,
                                           max_retries=cfg.llm_max_retries, backoff_base_s=cfg.backoff_base_s,
                                           backoff_max_s=cfg.backoff_max_s, request_timeout_s=cfg.llm_timeout_s)
         else:
             raise FatalBackendError(
                 f"provider {spec.provider!r} isn't supported for AvalonBot games: LLMAgent needs an "
-                f"OpenAI-compatible endpoint with tool calls (use provider openai, or fake for offline)"
+                f"OpenAI-compatible endpoint with tool calls (use provider openai or codex_cli, or fake for offline)"
             )
     return agents
 
@@ -173,6 +179,7 @@ class EventBridge:
     def __init__(self, log: EventLog, adapter: ArenaGraphAdapter):
         self.log = log
         self.adapter = adapter
+        self.agents = {}
 
     def emit(self, event_type: str, **data: Any) -> None:
         self.adapter.feed(self.log.emit(event_type, **data))
@@ -196,6 +203,11 @@ class EventBridge:
                       num_fails=int(d["num_fails"]))
         elif event_type == "assassination":
             self.emit("assassination", **d)
+        if event_type in ("team_proposed", "team_vote_result", "quest_result"):
+            for seat, agent in self.agents.items():
+                if agent.memory is not None and agent.memory.percival is not None:
+                    self.emit("percival_beliefs", seat=seat, after_event=event_type,
+                              **agent.memory.percival.snapshot())
 
 
 async def play_game(setup: GameSetup, cfg: ArenaConfig, log: EventLog) -> Dict[str, Any]:
@@ -203,6 +215,7 @@ async def play_game(setup: GameSetup, cfg: ArenaConfig, log: EventLog) -> Dict[s
     adapter = ArenaGraphAdapter(merlin_graph=False)
     bridge = EventBridge(log, adapter)
     agents = build_agents(setup, cfg, log)
+    bridge.agents = agents
     roles = {seat: ARENA_ROLES[name] for seat, name in enumerate(setup.role_names)}
 
     bridge.emit(
@@ -210,6 +223,7 @@ async def play_game(setup: GameSetup, cfg: ArenaConfig, log: EventLog) -> Dict[s
         seed=setup.seed,
         config_hash=cfg.config_hash(),
         condition=cfg.condition,
+        percival_condition=cfg.percival_condition,
         quest_leader=setup.quest_leader,
         seats=[
             {"seat": i, "participant": setup.seat_participants[i], "name": spec.name, "agent": spec.agent,
@@ -237,7 +251,8 @@ async def play_game(setup: GameSetup, cfg: ArenaConfig, log: EventLog) -> Dict[s
 
     # the same graph, rebuilt from the logged events alone (rule beliefs, no talk edges)
     bridge.emit("belief_graphs", graphs={
-        seat: {"edges": len(m.graph.edges), "p_evil": dict(m.beliefs.p_evil) if m.beliefs else None}
+        seat: {"edges": len(m.graph.edges), "p_evil": dict(m.beliefs.p_evil) if m.beliefs else (m.percival.p_evil if m.percival else None),
+               "percival": m.percival.snapshot() if m.percival else None}
         for seat, m in adapter.memories.items()
     })
 
@@ -267,6 +282,8 @@ async def play_game(setup: GameSetup, cfg: ArenaConfig, log: EventLog) -> Dict[s
         "winner": "good" if good_won else "evil",
         "reason": reason,
         "condition": cfg.condition,
+        "percival_condition": cfg.percival_condition,
+        "percival_metrics": metrics.percival_metrics,
         "quest_results": list(runner.engine.quest_results),
         "proposals": len(runner.engine.vote_history),
         "merlin_survived": metrics.merlin_survived,
