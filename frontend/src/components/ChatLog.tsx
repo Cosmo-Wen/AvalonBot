@@ -67,49 +67,40 @@ function stripTtsTokens(text: string): string {
     .trim();
 }
 
+const short = (team: number[]) => team.map((s) => SEAT_NAMES[s]).join(", ");
+
 function formatEvent(event: GameEvent): { speaker?: number; text: string; isSystem: boolean } {
   switch (event.type) {
     case "utterance":
       return { speaker: event.speaker, text: stripTtsTokens(event.text), isSystem: false };
     case "evil_chat":
-      return { speaker: event.speaker, text: stripTtsTokens(`[Evil] ${event.text}`), isSystem: false };
+      return { speaker: event.speaker, text: stripTtsTokens(`[evil only] ${event.text}`), isSystem: false };
     case "team_proposed":
       return {
-        text: `Player ${event.leader} proposes team [${event.team.join(", ")}] for Quest ${event.quest + 1}`,
+        text: `Q${event.quest}.${event.round + 1} · ${SEAT_NAMES[event.leader]} proposes ${short(event.team)}`,
         isSystem: true,
       };
     case "team_vote_result": {
-      const approveCount = Object.values(event.votes).filter(Boolean).length;
+      const yes = Object.entries(event.votes).filter(([, v]) => v).map(([s]) => SEAT_NAMES[Number(s)]);
       return {
-        text: event.approved
-          ? `Team approved (${approveCount}–${5 - approveCount})`
-          : `Team rejected (${approveCount}–${5 - approveCount})`,
+        text: `${event.approved ? "Approved" : "Rejected"} ${yes.length}–${5 - yes.length}${yes.length ? ` (yes: ${yes.join(", ")})` : ""}`,
         isSystem: true,
       };
     }
     case "quest_result":
       return {
         text: event.success
-          ? `Quest ${event.quest + 1} succeeded`
-          : `Quest ${event.quest + 1} failed — ${event.numFails} fail${event.numFails !== 1 ? "s" : ""}`,
+          ? `Quest ${event.quest} succeeded`
+          : `Quest ${event.quest} failed · ${event.numFails} fail${event.numFails !== 1 ? "s" : ""}`,
         isSystem: true,
       };
     case "assassination":
       return {
-        text: `Assassin targets Player ${event.target} — ${event.hitMerlin ? "Merlin killed!" : "Merlin survives!"}`,
+        text: `${SEAT_NAMES[event.assassin]} assassinates ${SEAT_NAMES[event.target]} · ${event.hitMerlin ? "Merlin killed" : "Merlin survives"}`,
         isSystem: true,
       };
     case "game_over":
-      return {
-        text: `Game over — ${event.winner === "good" ? "Good" : "Evil"} wins: ${event.reason}`,
-        isSystem: true,
-      };
-    case "belief_update":
-      return { text: "", isSystem: true };
-    case "audio_chunk":
-      return { text: "", isSystem: true };
-    case "role_reveal":
-      return { text: "Roles have been assigned", isSystem: true };
+      return { text: `${event.winner === "good" ? "Good" : "Evil"} wins · ${event.reason}`, isSystem: true };
   }
 }
 
@@ -132,9 +123,7 @@ export default function ChatLog({ events, currentSpeaker }: ChatLogProps) {
     setUserScrolled(!isAtBottom);
   }
 
-  const displayEvents = events.filter(
-    (e) => e.type !== "belief_update" && e.type !== "audio_chunk"
-  );
+  const displayEvents = events;
 
   return (
     <div className="flex flex-col h-full">

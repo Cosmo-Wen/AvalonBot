@@ -40,7 +40,7 @@ function QuestShield({
           isActive ? "animate-glow-ring rounded-full" : ""
         }`}
       >
-        <svg width="52" height="62" viewBox="0 0 40 48" fill="none">
+        <svg width="40" height="48" viewBox="0 0 40 48" fill="none">
           <path
             d="M20 2L4 10V24C4 34 12 42 20 46C28 42 36 34 36 24V10L20 2Z"
             fill={fillColor}
@@ -114,7 +114,8 @@ function QuestShield({
       </div>
 
       <span
-        className={`font-body text-[10px] uppercase tracking-[0.15em] transition-colors duration-500 ${
+        title={`Team of ${teamSize}`}
+        className={`whitespace-nowrap font-mono text-[10px] transition-colors duration-500 ${
           isActive
             ? "text-medieval-gold"
             : isPassed
@@ -124,7 +125,7 @@ function QuestShield({
                 : "text-medieval-silver/50"
         }`}
       >
-        {teamSize} riders
+        team {teamSize}
       </span>
 
       {isFailed && result !== null && result.numFails > 0 && (
@@ -144,24 +145,16 @@ export default function QuestTracker({
   const evilWins = quests.filter((q) => q !== null && !q.success).length;
 
   return (
-    <div className="flex flex-col items-center gap-4">
-      <div className="flex items-center gap-6">
-        <span className="font-display text-xs uppercase tracking-[0.2em] text-medieval-good">
-          Good {goodWins}
-        </span>
-        <div className="flex items-end gap-3 md:gap-5">
-          {quests.map((result, i) => (
-            <QuestShield
-              key={i}
-              result={result}
-              index={i}
-              isActive={i === currentQuest}
-            />
-          ))}
-        </div>
-        <span className="font-display text-xs uppercase tracking-[0.2em] text-medieval-evil">
-          Evil {evilWins}
-        </span>
+    <div className="flex flex-col gap-3 rounded-2xl border border-medieval-border bg-medieval-darker p-4">
+      <div className="flex items-center justify-between">
+        <span className="font-display text-xs uppercase tracking-[0.2em] text-medieval-good">Good {goodWins}</span>
+        <span className="font-display text-[10px] uppercase tracking-[0.2em] text-medieval-gold-dim">Quests</span>
+        <span className="font-display text-xs uppercase tracking-[0.2em] text-[#f06a6a]">Evil {evilWins}</span>
+      </div>
+      <div className="flex items-start justify-between">
+        {quests.map((result, i) => (
+          <QuestShield key={i} result={result} index={i} isActive={i === currentQuest - 1 && result === null} />
+        ))}
       </div>
     </div>
   );

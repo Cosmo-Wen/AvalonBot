@@ -1,25 +1,29 @@
 import { useCallback, useEffect, useReducer, useRef, useState } from "react";
 import type {
-  GameState,
+  BeliefSnapshot,
+  GameEvent,
   GamePhase,
+  GameState,
   Player,
+  PlayerMemoryView,
   PlayerRole,
   PlayerSide,
   QuestResult,
   TeamProposal,
-  GameEvent,
-  BeliefSnapshot,
 } from "../types";
-import { SEAT_NAMES, QUEST_SIZES } from "../types";
+import { SEAT_NAMES } from "../types";
 
-const INITIAL_PLAYERS: Player[] = Array.from({ length: 5 }, (_, i) => ({
-  seat: i,
-  name: SEAT_NAMES[i],
+type Data = Record<string, unknown>;
+
+const INITIAL_PLAYERS: Player[] = SEAT_NAMES.map((name, seat) => ({
+  seat,
+  name,
   isSpeaking: false,
   audioLevel: 0,
 }));
 
 const INITIAL_STATE: GameState = {
+  mode: null,
   phase: "waiting",
   turn: 0,
   roundNum: 0,
@@ -27,262 +31,225 @@ const INITIAL_STATE: GameState = {
   players: INITIAL_PLAYERS,
   quests: [null, null, null, null, null],
   currentProposal: null,
+  lastVote: null,
   events: [],
-  beliefs: {},
-  rolesRevealed: false,
+  memory: {},
+  beliefHistory: {},
+  rolesKnown: false,
+  violations: [],
+  error: null,
+  finished: false,
 };
 
 type Action =
   | { type: "RESET" }
-  | { type: "GAME_START"; data: Record<string, unknown> }
-  | { type: "PHASE_CHANGE"; phase: GamePhase }
-  | { type: "UTTERANCE"; event: GameEvent }
-  | { type: "EVIL_CHAT"; event: GameEvent }
-  | { type: "TEAM_PROPOSED"; data: Record<string, unknown>; seq: number }
-  | { type: "TEAM_VOTE_RESULT"; data: Record<string, unknown>; seq: number }
-  | { type: "QUEST_RESULT"; data: Record<string, unknown>; seq: number }
-  | { type: "BELIEF_UPDATE"; data: Record<string, unknown>; seq: number }
-  | { type: "ASSASSINATION"; data: Record<string, unknown>; seq: number }
-  | { type: "GAME_OVER"; data: Record<string, unknown>; seq: number }
-  | { type: "ROLE_REVEAL"; data: Record<string, unknown>; seq: number }
-  | { type: "SET_SPEAKING"; seat: number; speaking: boolean }
-  | { type: "SET_AUDIO_LEVEL"; seat: number; level: number };
+  | { type: "MESSAGE"; msg: { type: string; seq: number; data: Data } };
 
-function gameReducer(state: GameState, action: Action): GameState {
-  switch (action.type) {
-    case "RESET":
-      return { ...INITIAL_STATE, players: INITIAL_PLAYERS.map((p) => ({ ...p })) };
+const ROLE_KEYS: Record<string, PlayerRole> = {
+  merlin: "merlin",
+  "loyal servant": "loyal_servant",
+  servant: "loyal_servant",
+  assassin: "assassin",
+  minion: "minion",
+};
 
-    case "GAME_START": {
-      const d = action.data;
-      const leader = (d.leader as number) ?? 0;
+function votesFrom(raw: unknown): Record<number, boolean> {
+  const votes: Record<number, boolean> = {};
+  for (const [seat, v] of Object.entries((raw as Record<string, boolean>) ?? {})) votes[Number(seat)] = Boolean(v);
+  return votes;
+}
+
+function reduceMessage(state: GameState, type: string, seq: number, d: Data): GameState {
+  switch (type) {
+    case "game_start":
       return {
         ...INITIAL_STATE,
-        phase: "team_selection",
-        leader,
         players: INITIAL_PLAYERS.map((p) => ({ ...p })),
-        events: [],
-        quests: [null, null, null, null, null],
-        beliefs: {},
+        mode: (d.mode as "live" | "replay") ?? null,
+        phase: "team_selection",
+        leader: (d.leader as number) ?? 0,
       };
-    }
 
-    case "ROLE_REVEAL": {
-      const d = action.data;
-      const roles = d.roles as Record<string, PlayerRole>;
-      const sides = d.sides as Record<string, PlayerSide>;
-      const players = state.players.map((p) => ({
-        ...p,
-        role: roles[String(p.seat)] ?? p.role,
-        side: sides[String(p.seat)] ?? p.side,
-      }));
-      return { ...state, players, rolesRevealed: true };
-    }
-
-    case "PHASE_CHANGE":
-      return { ...state, phase: action.phase };
-
-    case "UTTERANCE": {
-      const ev = action.event;
-      const speaker = ev.type === "utterance" ? ev.speaker : -1;
+    case "role_reveal": {
+      const roles = (d.roles as Record<string, { role: string; side: string }>) ?? {};
       return {
         ...state,
-        players: state.players.map((p) => ({
-          ...p,
-          isSpeaking: p.seat === speaker,
-        })),
-        events: [...state.events, ev],
+        rolesKnown: true,
+        players: state.players.map((p) => {
+          const info = roles[String(p.seat)];
+          if (!info) return p;
+          return {
+            ...p,
+            role: ROLE_KEYS[info.role.toLowerCase()],
+            side: info.side.toLowerCase() as PlayerSide,
+          };
+        }),
       };
     }
 
-    case "EVIL_CHAT":
-      return { ...state, events: [...state.events, action.event] };
+    case "utterance":
+    case "evil_chat": {
+      const event = { type, speaker: d.speaker as number, text: d.text as string, seq } as GameEvent;
+      return { ...state, events: [...state.events, event] };
+    }
 
-    case "TEAM_PROPOSED": {
-      const d = action.data;
-      const quest = d.turn !== undefined ? (d.turn as number) + 1 : state.turn + 1;
-      const round = (d.round_num as number) ?? state.roundNum;
+    case "speaking":
+      return {
+        ...state,
+        players: state.players.map((p) =>
+          p.seat === d.seat ? { ...p, isSpeaking: Boolean(d.active) } : d.active ? { ...p, isSpeaking: false } : p
+        ),
+      };
+
+    case "team_proposed": {
       const proposal: TeamProposal = {
+        quest: (d.turn as number) + 1,
+        round: d.round_num as number,
         leader: d.leader as number,
         team: d.team as number[],
-        quest,
-        round,
-      };
-      const event: GameEvent = {
-        type: "team_proposed",
-        leader: proposal.leader,
-        team: proposal.team,
-        quest,
-        round,
-        seq: action.seq,
       };
       return {
         ...state,
         phase: "team_voting",
+        turn: d.turn as number,
+        roundNum: proposal.round,
+        leader: proposal.leader,
         currentProposal: proposal,
-        turn: quest - 1,
-        roundNum: round,
-        events: [...state.events, event],
+        lastVote: null,
+        events: [...state.events, { type: "team_proposed", ...proposal, seq }],
       };
     }
 
-    case "TEAM_VOTE_RESULT": {
-      const d = action.data;
-      const rawVotes = d.votes as Record<string, boolean>;
-      const approved = d.approved as boolean;
-      const votes: Record<number, boolean> = {};
-      for (const [seat, val] of Object.entries(rawVotes)) {
-        votes[Number(seat)] = val;
-      }
-      const quest = (d.turn as number | undefined) !== undefined
-        ? (d.turn as number) + 1
-        : state.currentProposal?.quest ?? state.turn + 1;
-      const round = (d.round_num as number) ?? state.roundNum;
-      const updatedProposal: TeamProposal | null = state.currentProposal
-        ? { ...state.currentProposal, votes, approved }
-        : null;
-      const event: GameEvent = {
-        type: "team_vote_result",
+    case "team_vote_result": {
+      const votes = votesFrom(d.votes);
+      const approved = Boolean(d.approved);
+      const quest = (d.turn as number) + 1;
+      const round = d.round_num as number;
+      const voted: TeamProposal = {
+        ...(state.currentProposal ?? { quest, round, leader: state.leader, team: (d.team as number[]) ?? [] }),
         votes,
         approved,
-        quest,
-        round,
-        seq: action.seq,
       };
       return {
         ...state,
         phase: approved ? "quest_voting" : "team_selection",
-        currentProposal: updatedProposal,
-        roundNum: approved ? round : round + 1,
+        currentProposal: voted,
+        lastVote: voted,
         leader: approved ? state.leader : (state.leader + 1) % 5,
-        players: state.players.map((p) => ({ ...p, isSpeaking: false })),
-        events: [...state.events, event],
+        roundNum: approved ? round : round + 1,
+        events: [...state.events, { type: "team_vote_result", votes, approved, quest, round, seq }],
       };
     }
 
-    case "QUEST_RESULT": {
-      const d = action.data;
-      const questIdx = d.turn !== undefined ? (d.turn as number) : state.turn;
-      const success = d.success as boolean;
-      const numFails = (d.num_fails as number) ?? 0;
-      const team = (d.team as number[]) ?? state.currentProposal?.team ?? [];
+    case "quest_result": {
+      const idx = d.turn as number;
       const result: QuestResult = {
-        quest: questIdx + 1,
-        team,
-        success,
-        numFails,
+        quest: idx + 1,
+        team: (d.team as number[]) ?? [],
+        success: Boolean(d.success),
+        numFails: (d.num_fails as number) ?? 0,
+        seq,
       };
       const quests = [...state.quests];
-      quests[questIdx] = result;
-      const goodScore = quests.filter((q) => q?.success === true).length;
-      const evilScore = quests.filter((q) => q !== null && !q.success).length;
-      const event: GameEvent = {
-        type: "quest_result",
-        quest: questIdx + 1,
-        team,
-        success,
-        numFails,
-        seq: action.seq,
-      };
-      const nextPhase: GamePhase =
-        goodScore >= 3
-          ? "assassination"
-          : evilScore >= 3
-            ? "game_over"
-            : "team_selection";
+      quests[idx] = result;
+      const passed = quests.filter((q) => q?.success).length;
+      const failed = quests.filter((q) => q && !q.success).length;
+      const phase: GamePhase = failed >= 3 ? "game_over" : passed >= 3 ? "assassination" : "team_selection";
       return {
         ...state,
-        phase: nextPhase,
+        phase,
         quests,
-        turn: questIdx + 1,
+        turn: Math.min(idx + 1, 4),
         roundNum: 0,
         leader: (state.leader + 1) % 5,
         currentProposal: null,
-        events: [...state.events, event],
+        events: [...state.events, { type: "quest_result", ...result }],
       };
     }
 
-    case "BELIEF_UPDATE": {
-      const d = action.data;
-      const snap: BeliefSnapshot = {
-        seq: action.seq,
-        player: d.player as number,
-        pEvil: d.p_evil as Record<number, number>,
-      };
-      const player = snap.player;
-      const existing = state.beliefs[player] ?? [];
+    case "assassination":
       return {
         ...state,
-        beliefs: { ...state.beliefs, [player]: [...existing, snap] },
+        events: [
+          ...state.events,
+          {
+            type: "assassination",
+            assassin: d.assassin as number,
+            target: d.target as number,
+            hitMerlin: Boolean(d.hit_merlin),
+            seq,
+          },
+        ],
       };
-    }
 
-    case "ASSASSINATION": {
-      const d = action.data;
-      const event: GameEvent = {
-        type: "assassination",
-        assassin: d.assassin as number,
-        target: d.target as number,
-        hitMerlin: d.hit_merlin as boolean,
-        seq: action.seq,
-      };
-      return { ...state, events: [...state.events, event] };
-    }
-
-    case "GAME_OVER": {
-      const d = action.data;
-      const event: GameEvent = {
-        type: "game_over",
-        winner: (d.winner as string) === "Good" ? "good" : "evil",
-        reason: (d.reason as string) ?? "",
-        seq: action.seq,
-      };
+    case "game_over":
       return {
         ...state,
         phase: "game_over",
+        finished: true,
         players: state.players.map((p) => ({ ...p, isSpeaking: false })),
-        events: [...state.events, event],
+        events: [
+          ...state.events,
+          {
+            type: "game_over",
+            winner: String(d.winner).toLowerCase() === "good" ? "good" : "evil",
+            reason: (d.reason as string) ?? "",
+            seq,
+          },
+        ],
       };
+
+    case "memory_update": {
+      const players = (d.players as Record<string, PlayerMemoryView>) ?? {};
+      const memory: Record<number, PlayerMemoryView> = {};
+      const beliefHistory = { ...state.beliefHistory };
+      for (const [seat, view] of Object.entries(players)) {
+        const s = Number(seat);
+        memory[s] = view;
+        if (!view.beliefName) continue;
+        const values: Record<number, number> = {};
+        for (const [p, v] of Object.entries(view.beliefs)) values[Number(p)] = v;
+        const history = beliefHistory[s] ?? [];
+        const last = history[history.length - 1];
+        const changed = !last || Object.keys(values).some((p) => last.values[Number(p)] !== values[Number(p)]);
+        if (changed || !last) beliefHistory[s] = [...history, { seq, values } as BeliefSnapshot];
+      }
+      return { ...state, memory, beliefHistory };
     }
 
-    case "SET_SPEAKING":
-      return {
-        ...state,
-        players: state.players.map((p) =>
-          p.seat === action.seat ? { ...p, isSpeaking: action.speaking } : p
-        ),
-      };
+    case "replay_end":
+      return { ...state, finished: true, violations: (d.violations as string[]) ?? [] };
 
-    case "SET_AUDIO_LEVEL":
-      return {
-        ...state,
-        players: state.players.map((p) =>
-          p.seat === action.seat ? { ...p, audioLevel: action.level } : p
-        ),
-      };
+    case "error":
+      return { ...state, error: (d.message as string) ?? "Unknown error" };
 
     default:
       return state;
   }
 }
 
-export type GameAction = Action;
+function gameReducer(state: GameState, action: Action): GameState {
+  if (action.type === "RESET") return { ...INITIAL_STATE, players: INITIAL_PLAYERS.map((p) => ({ ...p })) };
+  const { type, seq, data } = action.msg;
+  return reduceMessage(state, type, seq, data);
+}
 
 interface UseGameSocketReturn {
   gameState: GameState;
   isConnected: boolean;
   startGame: (mode: "live" | "replay", replayFile?: string) => void;
+  stopGame: () => void;
   pause: () => void;
   resume: () => void;
   step: () => void;
   setSpeed: (speed: number) => void;
+  setVoice: (on: boolean) => void;
   availableGames: string[];
-  dispatch: React.Dispatch<Action>;
 }
 
 export function useGameSocket(
   wsUrl = "/ws/game",
-  onAudioChunk?: (seat: number, data: string) => void
+  onAudio?: (seat: number, base64Wav: string) => void
 ): UseGameSocketReturn {
   const [state, dispatch] = useReducer(gameReducer, INITIAL_STATE);
   const [isConnected, setIsConnected] = useState(false);
@@ -290,124 +257,52 @@ export function useGameSocket(
   const wsRef = useRef<WebSocket | null>(null);
   const reconnectTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const reconnectDelay = useRef(1000);
+  const onAudioRef = useRef(onAudio);
+  onAudioRef.current = onAudio;
+  const unmounted = useRef(false);
 
-  const send = useCallback((msg: Record<string, unknown>) => {
-    if (wsRef.current?.readyState === WebSocket.OPEN) {
-      wsRef.current.send(JSON.stringify(msg));
-    }
+  const send = useCallback((msg: Data) => {
+    if (wsRef.current?.readyState === WebSocket.OPEN) wsRef.current.send(JSON.stringify(msg));
   }, []);
 
   const connect = useCallback(() => {
-    if (wsRef.current?.readyState === WebSocket.OPEN) return;
-
+    if (unmounted.current || wsRef.current) return;
     const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
-    const url = wsUrl.startsWith("/")
-      ? `${protocol}//${window.location.host}${wsUrl}`
-      : wsUrl;
-
+    const url = wsUrl.startsWith("/") ? `${protocol}//${window.location.host}${wsUrl}` : wsUrl;
     const ws = new WebSocket(url);
     wsRef.current = ws;
 
     ws.onopen = () => {
+      if (wsRef.current !== ws) return;
       setIsConnected(true);
       reconnectDelay.current = 1000;
-      send({ type: "list_games" });
     };
 
     ws.onmessage = (event) => {
-      let msg: { type: string; data?: Record<string, unknown>; seq?: number };
+      if (wsRef.current !== ws) return;
+      let msg: { type: string; seq?: number; data?: Data };
       try {
         msg = JSON.parse(event.data);
       } catch {
         return;
       }
-
-      const d = msg.data ?? {};
-      const seq = msg.seq ?? 0;
-
-      switch (msg.type) {
-        case "game_list":
-          setAvailableGames((d.games as string[]) ?? []);
-          break;
-        case "game_start":
-          dispatch({ type: "GAME_START", data: d });
-          break;
-        case "role_reveal":
-        case "roles_revealed": {
-          const rawRoles = d.roles as Record<string, { role: string; side: string }> | undefined;
-          if (rawRoles) {
-            const roles: Record<string, string> = {};
-            const sides: Record<string, string> = {};
-            for (const [seat, info] of Object.entries(rawRoles)) {
-              roles[seat] = info.role?.toLowerCase().replace(/ /g, "_") ?? "";
-              sides[seat] = info.side?.toLowerCase() ?? "";
-            }
-            dispatch({ type: "ROLE_REVEAL", data: { roles, sides }, seq });
-          }
-          break;
-        }
-        case "phase_change":
-          dispatch({ type: "PHASE_CHANGE", phase: d.phase as GamePhase });
-          break;
-        case "utterance":
-          dispatch({
-            type: "UTTERANCE",
-            event: {
-              type: "utterance",
-              seq,
-              speaker: d.speaker as number,
-              text: d.text as string,
-            },
-          });
-          break;
-        case "evil_chat":
-          dispatch({
-            type: "EVIL_CHAT",
-            event: {
-              type: "evil_chat",
-              seq,
-              speaker: d.speaker as number,
-              text: d.text as string,
-            },
-          });
-          break;
-        case "team_proposed":
-          dispatch({ type: "TEAM_PROPOSED", data: d, seq });
-          break;
-        case "team_vote_result":
-          dispatch({ type: "TEAM_VOTE_RESULT", data: d, seq });
-          break;
-        case "quest_result":
-          dispatch({ type: "QUEST_RESULT", data: d, seq });
-          break;
-        case "belief_update":
-          dispatch({ type: "BELIEF_UPDATE", data: d, seq });
-          break;
-        case "assassination":
-          dispatch({ type: "ASSASSINATION", data: d, seq });
-          break;
-        case "game_over":
-          dispatch({ type: "GAME_OVER", data: d, seq });
-          break;
-        case "audio_chunk":
-          if (onAudioChunk) {
-            onAudioChunk(d.speaker as number, d.audio as string);
-          }
-          break;
-        case "speaking_start":
-          dispatch({ type: "SET_SPEAKING", seat: d.speaker as number, speaking: true });
-          break;
-        case "speaking_stop":
-          dispatch({ type: "SET_SPEAKING", seat: d.speaker as number, speaking: false });
-          break;
-        default:
-          break;
+      const data = msg.data ?? {};
+      if (msg.type === "game_list") {
+        setAvailableGames((data.games as string[]) ?? []);
+        return;
       }
+      if (msg.type === "audio") {
+        onAudioRef.current?.(data.speaker as number, data.audio as string);
+        return;
+      }
+      dispatch({ type: "MESSAGE", msg: { type: msg.type, seq: msg.seq ?? 0, data } });
     };
 
     ws.onclose = () => {
+      if (wsRef.current !== ws) return;
       setIsConnected(false);
       wsRef.current = null;
+      if (unmounted.current) return;
       reconnectTimer.current = setTimeout(() => {
         reconnectDelay.current = Math.min(reconnectDelay.current * 1.5, 16000);
         connect();
@@ -415,13 +310,16 @@ export function useGameSocket(
     };
 
     ws.onerror = () => ws.close();
-  }, [wsUrl, send, onAudioChunk]);
+  }, [wsUrl]);
 
   useEffect(() => {
+    unmounted.current = false;
     connect();
     return () => {
+      unmounted.current = true;
       if (reconnectTimer.current) clearTimeout(reconnectTimer.current);
       wsRef.current?.close();
+      wsRef.current = null;
     };
   }, [connect]);
 
@@ -433,23 +331,16 @@ export function useGameSocket(
     [send]
   );
 
-  const pause = useCallback(() => send({ type: "control", action: "pause" }), [send]);
-  const resume = useCallback(() => send({ type: "control", action: "resume" }), [send]);
-  const step = useCallback(() => send({ type: "control", action: "step" }), [send]);
-  const setSpeed = useCallback(
-    (speed: number) => send({ type: "control", action: "speed", value: speed }),
-    [send]
-  );
-
   return {
     gameState: state,
     isConnected,
     startGame,
-    pause,
-    resume,
-    step,
-    setSpeed,
+    stopGame: useCallback(() => send({ type: "stop" }), [send]),
+    pause: useCallback(() => send({ type: "control", action: "pause" }), [send]),
+    resume: useCallback(() => send({ type: "control", action: "resume" }), [send]),
+    step: useCallback(() => send({ type: "control", action: "step" }), [send]),
+    setSpeed: useCallback((speed: number) => send({ type: "control", action: "speed", value: speed }), [send]),
+    setVoice: useCallback((on: boolean) => send({ type: "settings", voice: on }), [send]),
     availableGames,
-    dispatch,
   };
 }

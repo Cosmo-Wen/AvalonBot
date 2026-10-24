@@ -1,111 +1,71 @@
+import { useEffect, useRef, useState, type ReactNode } from "react";
 import PlayerAvatar from "./PlayerAvatar";
-import { type Player, type TeamProposal } from "../types";
+import type { Player, TeamProposal } from "../types";
 
 interface GameTableProps {
   players: Player[];
   leader: number;
   proposal: TeamProposal | null;
   showRoles: boolean;
-  seatVideos?: Record<number, { stream: MediaStream }>;
+  seatVideos: Record<number, MediaStream>;
+  levels: Record<number, number>;
+  children?: ReactNode;
 }
 
-// Positions around a circle — evenly spaced, starting from top center
-// Each avatar is centered on its point via translate(-50%, -50%)
-const AVATAR_POSITIONS = [
-  { top: "4%", left: "50%" },   // Seat 0 — top center
-  { top: "28%", left: "93%" },  // Seat 1 — upper right
-  { top: "78%", left: "80%" },  // Seat 2 — lower right
-  { top: "78%", left: "20%" },  // Seat 3 — lower left
-  { top: "28%", left: "7%" },   // Seat 4 — upper left
-];
+const TABLE_DIAMETER = 0.6;
+const SEAT_RADIUS = 0.39;
 
-export default function GameTable({
-  players,
-  leader,
-  proposal,
-  showRoles,
-  seatVideos,
-}: GameTableProps) {
-  const teamSet = new Set(proposal?.team ?? []);
+function seatPosition(seat: number) {
+  const angle = -Math.PI / 2 + (2 * Math.PI * seat) / 5;
+  return { left: 50 + SEAT_RADIUS * 100 * Math.cos(angle), top: 50 + SEAT_RADIUS * 100 * Math.sin(angle) };
+}
+
+export default function GameTable({ players, leader, proposal, showRoles, seatVideos, levels, children }: GameTableProps) {
+  const ref = useRef<HTMLDivElement>(null);
+  const [size, setSize] = useState(640);
+  useEffect(() => {
+    if (!ref.current) return;
+    const observer = new ResizeObserver(([entry]) => setSize(entry.contentRect.width));
+    observer.observe(ref.current);
+    return () => observer.disconnect();
+  }, []);
+
+  const team = new Set(proposal?.team ?? []);
+  const avatarWidth = Math.max(78, Math.min(132, size * 0.16));
 
   return (
-    <div className="relative w-full max-w-[560px] mx-auto aspect-square">
-      {/* Ambient radial glow behind the table */}
+    <div ref={ref} className="relative mx-auto aspect-square w-full max-w-[760px]">
       <div
-        className="absolute inset-0 rounded-full pointer-events-none"
-        style={{
-          background:
-            "radial-gradient(circle at 50% 50%, rgba(201, 168, 76, 0.06) 0%, transparent 55%)",
-        }}
+        className="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 rounded-full"
+        style={{ width: `${TABLE_DIAMETER * 100 + 4}%`, height: `${TABLE_DIAMETER * 100 + 4}%`, background: "radial-gradient(circle, rgba(201,168,76,0.12) 55%, transparent 72%)" }}
+      />
+      <img
+        src="/round-table.webp"
+        alt="The Round Table"
+        draggable={false}
+        className="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 rounded-full"
+        style={{ width: `${TABLE_DIAMETER * 100}%`, height: `${TABLE_DIAMETER * 100}%`, filter: "saturate(0.9) brightness(0.92)" }}
       />
 
-      {/* Double-Bezel table frame — outer shell */}
-      <div
-        className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 rounded-full"
-        style={{
-          width: "55%",
-          height: "55%",
-          padding: "5px",
-          background: "rgba(201, 168, 76, 0.05)",
-          border: "1px solid rgba(201, 168, 76, 0.12)",
-        }}
-      >
-        {/* Inner core — the Round Table image */}
-        <div
-          className="w-full h-full rounded-full overflow-hidden relative"
-          style={{
-            boxShadow:
-              "inset 0 2px 4px rgba(201, 168, 76, 0.08), 0 0 60px rgba(201, 168, 76, 0.05)",
-          }}
-        >
-          <img
-            src="/table.jpg"
-            alt="The Round Table"
-            className="absolute inset-0 w-full h-full object-cover scale-150"
-            style={{ objectPosition: "50% 35%" }}
-            draggable={false}
-          />
-          {/* Heavy vignette to hide text on the image */}
-          <div
-            className="absolute inset-0"
-            style={{
-              background:
-                "radial-gradient(circle at 50% 50%, transparent 20%, rgba(10, 10, 15, 0.6) 50%, rgba(10, 10, 15, 0.92) 75%, rgba(10, 10, 15, 1) 100%)",
-            }}
-          />
-          {/* Inner glow for depth */}
-          <div
-            className="absolute inset-0"
-            style={{
-              background:
-                "radial-gradient(circle at 50% 50%, rgba(201, 168, 76, 0.06) 0%, transparent 40%)",
-            }}
-          />
-        </div>
-      </div>
+      <div className="pointer-events-none absolute inset-0 z-20 flex items-center justify-center">{children}</div>
 
-      {/* Player avatars positioned around the table */}
-      {players.map((player, i) => {
-        const pos = AVATAR_POSITIONS[i];
+      {players.map((player) => {
+        const pos = seatPosition(player.seat);
         return (
           <div
             key={player.seat}
-            className="absolute z-10"
-            style={{
-              top: pos.top,
-              left: pos.left,
-              transform: "translate(-50%, -50%)",
-              transition: "all 700ms cubic-bezier(0.32, 0.72, 0, 1)",
-            }}
+            className="absolute z-10 -translate-x-1/2 -translate-y-1/2"
+            style={{ left: `${pos.left}%`, top: `${pos.top}%` }}
           >
             <PlayerAvatar
               player={player}
               isLeader={leader === player.seat}
-              isOnTeam={teamSet.has(player.seat)}
+              isOnTeam={team.has(player.seat)}
               vote={proposal?.votes?.[player.seat]}
               showRole={showRoles}
-              size={88}
-              videoStream={seatVideos?.[player.seat]?.stream ?? null}
+              videoStream={seatVideos[player.seat] ?? null}
+              level={levels[player.seat] ?? 0}
+              width={avatarWidth}
             />
           </div>
         );
