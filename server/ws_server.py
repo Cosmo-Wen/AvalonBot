@@ -4,7 +4,7 @@ FastAPI WebSocket server for the Avalon spectator frontend.
 Modes:
 - Replay: steps through a recorded arena game (`games/game_*.jsonl`), rebuilding every player's
   memory and knowledge graph as it goes (with `talk_edges.json` from the same folder, if present).
-- Live: runs a game with HeuristicAgents and streams every event plus each agent's own memory.
+- Live: runs a heuristic game, or an LLM game whose model calls share one queue.
 
 Speech: each utterance is synthesized with Higgs TTS. If the seat's LiveKit avatar is running, the
 audio goes to the avatar (the browser hears it from LiveKit); otherwise it is sent over this socket.
@@ -36,6 +36,7 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, ROOT)
 
 from avalon.agents import HeuristicAgent  # noqa: E402
+from avalon.llm_agent import LLMAgent  # noqa: E402
 from avalon.arena_adapter import ArenaGraphAdapter  # noqa: E402
 from avalon.engine import ROLE_NAMES, Role  # noqa: E402
 from avalon.replay import load_events, load_talk_edges  # noqa: E402
@@ -207,6 +208,17 @@ class GameSession:
         await self.send("speaking", {"seat": seat, "active": False}, seq)
 
 
+# One model call at a time. A new LLM game would otherwise fire a seat's discussion
+# and every servant's memory update together.
+_LLM_QUEUE = asyncio.Semaphore(1)
+
+
+class QueuedLLMAgent(LLMAgent):
+    async def _post(self, payload: Dict[str, Any]) -> Dict[str, Any]:
+        async with _LLM_QUEUE:
+            return await super()._post(payload)
+
+
 def roles_payload(roles: Dict[int, Role], sides: Dict[int, bool]) -> Dict[str, Any]:
     return {"roles": {str(s): {"role": ROLE_NAMES[r], "side": "Good" if sides[s] else "Evil"} for s, r in roles.items()}}
 
@@ -227,7 +239,8 @@ async def game_ws(ws: WebSocket):
                     session.start(run_replay(session, msg.get("replay_file") or ""))
                 else:
                     human_seat = msg.get("human_seat")
-                    session.start(run_live_game(session, human_seat=human_seat))
+                    players = "llm" if msg.get("players") == "llm" else "heuristic"
+                    session.start(run_live_game(session, human_seat=human_seat, players=players))
             elif kind == "human_action_response":
                 session.resolve_human_action(msg.get("action", ""), msg.get("data", {}))
             elif kind == "stop":
@@ -319,13 +332,18 @@ async def run_replay(session: GameSession, replay_file: str) -> None:
 
 # ── Live ─────────────────────────────────────────────────────────────
 
-async def run_live_game(session: GameSession, human_seat: Optional[int] = None) -> None:
+async def run_live_game(session: GameSession, human_seat: Optional[int] = None, players: str = "heuristic") -> None:
     session.human_seat = human_seat
+    if players == "llm" and not (os.getenv("OPENAI_API_KEY") or os.getenv("BOSON_API_KEY")):
+        await session.send("error", {"message": "No OPENAI_API_KEY is set, so an LLM game cannot start."})
+        return
     agents: Dict[int, Any] = {}
     for i in range(5):
         if human_seat is not None and i == human_seat:
             session.human_agent = HumanWebAgent(i, session=session, role=Role.LOYAL_SERVANT)
             agents[i] = session.human_agent
+        elif players == "llm":
+            agents[i] = QueuedLLMAgent(i, Role.LOYAL_SERVANT, condition="belief_graph", seed=None)
         else:
             agents[i] = HeuristicAgent(i, Role.LOYAL_SERVANT, condition="rule_graph", seed=None, merlin_graph=True)
 

@@ -102,9 +102,9 @@ export default function App() {
   }, [playing, pause, resume]);
 
   const begin = useCallback(
-    (mode: "live" | "replay", file?: string, humanSeat?: number | null) => {
+    (mode: "live" | "replay", file?: string, humanSeat?: number | null, players?: "llm" | "heuristic") => {
       audio.unlock();
-      startGame(mode, file, humanSeat);
+      startGame(mode, file, humanSeat, players);
       setSpeed(speed);
       setVoice(voiceOn);
       setIsPlaying(true);
@@ -286,6 +286,7 @@ export default function App() {
           setVoice(!voiceOn);
         }}
         onNewGame={(humanSeat) => begin("live", undefined, humanSeat)}
+        onLlmGame={() => begin("live", undefined, null, "llm")}
         onLoadReplay={(file) => begin("replay", file)}
         status={status}
         availableReplays={availableGames}

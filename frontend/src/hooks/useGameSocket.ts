@@ -282,7 +282,7 @@ function gameReducer(state: GameState, action: Action): GameState {
 interface UseGameSocketReturn {
   gameState: GameState;
   isConnected: boolean;
-  startGame: (mode: "live" | "replay", replayFile?: string, humanSeat?: number | null) => void;
+  startGame: (mode: "live" | "replay", replayFile?: string, humanSeat?: number | null, players?: "llm" | "heuristic") => void;
   sendHumanAction: (action: string, data: Record<string, unknown>) => void;
   stopGame: () => void;
   pause: () => void;
@@ -370,9 +370,9 @@ export function useGameSocket(
   }, [connect]);
 
   const startGame = useCallback(
-    (mode: "live" | "replay", replayFile?: string, humanSeat?: number | null) => {
+    (mode: "live" | "replay", replayFile?: string, humanSeat?: number | null, players?: "llm" | "heuristic") => {
       dispatch({ type: "RESET" });
-      send({ type: "start_game", mode, replay_file: replayFile, human_seat: humanSeat });
+      send({ type: "start_game", mode, replay_file: replayFile, human_seat: humanSeat, players });
     },
     [send]
   );

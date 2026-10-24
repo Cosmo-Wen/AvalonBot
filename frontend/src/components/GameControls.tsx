@@ -10,6 +10,7 @@ interface GameControlsProps {
   onSpeedChange: (speed: number) => void;
   onVoiceToggle: () => void;
   onNewGame: (humanSeat?: number | null) => void;
+  onLlmGame: () => void;
   onLoadReplay: (file: string) => void;
   status: string;
   availableReplays: string[];
@@ -96,6 +97,9 @@ export default function GameControls(props: GameControlsProps) {
         )}
         <Button onClick={() => props.onNewGame(null)} title="Launch game with all 5 AI players">
           Spectate (All AI)
+        </Button>
+        <Button onClick={props.onLlmGame} title="Five LLM players. Model calls run one at a time.">
+          LLM table
         </Button>
         <button
           type="button"
