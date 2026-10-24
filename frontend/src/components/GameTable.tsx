@@ -43,11 +43,11 @@ export default function GameTable({ players, leader, proposal, showRoles, seatVi
         style={{ width: `${TABLE_DIAMETER * 100 + 4}%`, height: `${TABLE_DIAMETER * 100 + 4}%`, background: "radial-gradient(circle, rgba(201,168,76,0.12) 55%, transparent 72%)" }}
       />
       <img
-        src="/round-table.webp"
-        alt="The Round Table"
+        src="/round-table.png"
+        alt="The Round Table at Winchester"
         draggable={false}
-        className="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 rounded-full"
-        style={{ width: `${TABLE_DIAMETER * 100}%`, height: `${TABLE_DIAMETER * 100}%`, filter: "saturate(0.9) brightness(0.92)" }}
+        className="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 rounded-full object-cover"
+        style={{ width: `${TABLE_DIAMETER * 100}%`, height: `${TABLE_DIAMETER * 100}%` }}
       />
 
       <div className="pointer-events-none absolute inset-0 z-20 flex items-center justify-center">{children}</div>
