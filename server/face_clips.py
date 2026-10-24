@@ -5,6 +5,7 @@ alphabetical filename order. This module never logs a filename or the pixels.
 One file type the video API rejects (AVIF) is re-encoded in memory first.
 """
 
+import hashlib
 import io
 from pathlib import Path
 from typing import Optional, Tuple
@@ -25,21 +26,35 @@ _MIME = {
 STREAM_URL = "https://api.boson.ai/v1/videos/stream"
 
 _faces: Optional[list] = None
+_face_sig: Optional[tuple] = None
 
 
 def faces() -> list:
-    """Seat order is alphabetical by filename. The names stay in the folder."""
-    global _faces
-    if _faces is None:
-        found = []
-        if FACE_DIR.is_dir():
-            found = sorted(
-                (p for p in FACE_DIR.iterdir() if p.is_file() and p.suffix.lower() in _IMAGE_EXT),
-                key=lambda p: p.name.lower(),
-            )
-        print(f"[faces] {len(found)} images assigned to seats")
+    """Seat order is alphabetical by filename. The names stay in the folder.
+
+    Replacing or adding a file is picked up on the next request. The log is only a count.
+    """
+    global _faces, _face_sig
+    found = []
+    if FACE_DIR.is_dir():
+        found = sorted(
+            (p for p in FACE_DIR.iterdir() if p.is_file() and p.suffix.lower() in _IMAGE_EXT),
+            key=lambda p: p.name.lower(),
+        )
+    sig = tuple((p.stat().st_mtime_ns, p.stat().st_size) for p in found)
+    if sig != _face_sig:
+        _face_sig = sig
         _faces = found
-    return _faces
+        print(f"[faces] {len(found)} images assigned to seats")
+    return _faces or []
+
+
+def face_stamp() -> str:
+    """Changes when a portrait file is replaced. Contains no filenames."""
+    digest = hashlib.sha256()
+    for mtime, size in _face_sig or ():
+        digest.update(f"{mtime}:{size}".encode())
+    return digest.hexdigest()[:12]
 
 
 def face_count() -> int:

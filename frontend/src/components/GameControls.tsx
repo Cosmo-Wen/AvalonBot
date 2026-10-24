@@ -12,6 +12,9 @@ interface GameControlsProps {
   onNewGame: (humanSeat?: number | null) => void;
   onLlmGame: () => void;
   onLoadReplay: (file: string) => void;
+  onExport: () => void;
+  canExport: boolean;
+  onPlayFile: (file: File) => void;
   status: string;
   availableReplays: string[];
 }
@@ -95,6 +98,22 @@ export default function GameControls(props: GameControlsProps) {
             <Button onClick={() => chosen && props.onLoadReplay(chosen)}>Watch replay</Button>
           </>
         )}
+        <Button onClick={props.onExport} disabled={!props.canExport} title="Download this game. Loading the file plays it back, including the knowledge graphs.">
+          Export game
+        </Button>
+        <label className="cursor-pointer rounded-full border border-medieval-border bg-medieval-surface/80 px-4 py-2 font-body text-xs font-medium text-medieval-parchment-dim hover:border-medieval-border-bright hover:text-medieval-parchment" title="Play a game file from Export">
+          Load game
+          <input
+            type="file"
+            accept="application/json,.json"
+            className="hidden"
+            onChange={(e) => {
+              const file = e.target.files?.[0];
+              e.target.value = "";
+              if (file) props.onPlayFile(file);
+            }}
+          />
+        </label>
         <Button onClick={() => props.onNewGame(null)} title="Launch game with all 5 AI players">
           Spectate (All AI)
         </Button>

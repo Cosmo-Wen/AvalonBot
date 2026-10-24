@@ -45,8 +45,26 @@ export default function App() {
   const [voiceOn, setVoiceOn] = useState(true);
 
   const audio = useAudio();
-  const { gameState, isConnected, startGame, sendHumanAction, pause, resume, step, setSpeed, setVoice, availableGames, seatClips } =
+  const { gameState, isConnected, startGame, sendHumanAction, pause, resume, step, setSpeed, setVoice, availableGames, seatClips, exportGame, playUpload } =
     useGameSocket("/ws/game", audio.playAudio);
+  const [faceStamp, setFaceStamp] = useState("");
+  useEffect(() => {
+    let stop = false;
+    const tick = () => {
+      fetch("/api/faces/stamp")
+        .then((r) => r.json())
+        .then((d: { stamp?: string }) => {
+          if (!stop && d.stamp) setFaceStamp(d.stamp);
+        })
+        .catch(() => undefined);
+    };
+    tick();
+    const id = setInterval(tick, 4000);
+    return () => {
+      stop = true;
+      clearInterval(id);
+    };
+  }, []);
 
   const phaseDetails = useMemo(() => {
     const { phase, leader, turn, roundNum, currentProposal, mode } = gameState;
@@ -221,6 +239,7 @@ export default function App() {
                 proposal={gameState.currentProposal}
                 showRoles={showRoles}
                 seatClips={seatClips}
+                faceStamp={faceStamp}
                 muted={audio.isMuted}
                 levels={audio.levels}
               >
@@ -257,6 +276,19 @@ export default function App() {
         onNewGame={(humanSeat) => begin("live", undefined, humanSeat)}
         onLlmGame={() => begin("live", undefined, null, "llm")}
         onLoadReplay={(file) => begin("replay", file)}
+        onExport={exportGame}
+        canExport={gameState.finished}
+        onPlayFile={(file) => {
+          file.text().then((text) => {
+            const parsed = JSON.parse(text) as { events?: { type: string; seq?: number; data?: Record<string, unknown> }[] } | { type: string }[];
+            const events = Array.isArray(parsed) ? parsed : parsed.events;
+            if (Array.isArray(events) && events.length) {
+              audio.unlock();
+              playUpload(events as { type: string; seq?: number; data?: Record<string, unknown> }[]);
+              setIsPlaying(true);
+            }
+          }).catch(() => undefined);
+        }}
         status={status}
         availableReplays={availableGames}
       />

@@ -24,6 +24,7 @@ import glob
 import io
 import json
 import os
+import re
 import sys
 import uuid
 import wave
@@ -43,7 +44,7 @@ from avalon.engine import ROLE_NAMES, Role  # noqa: E402
 from avalon.replay import load_events, load_talk_edges  # noqa: E402
 from avalon.runner import AvalonGameRunner  # noqa: E402
 from server.audio_proxy import BOSON_API_KEY, get_tts_audio  # noqa: E402
-from server.face_clips import render_clip, still_for_seat  # noqa: E402
+from server.face_clips import face_stamp, render_clip, still_for_seat  # noqa: E402
 from server.livekit_avatars import AvatarManager  # noqa: E402
 from server.memory_view import serialize_memories  # noqa: E402
 from server.human_web_agent import HumanWebAgent  # noqa: E402
@@ -106,7 +107,15 @@ async def face_still(seat: int):
     if still is None:
         return JSONResponse({"error": "no face"}, status_code=404)
     body, mime = still
-    return Response(content=body, media_type=mime, headers={"Cache-Control": "private, max-age=3600"})
+    return Response(content=body, media_type=mime, headers={"Cache-Control": "no-store"})
+
+
+@app.get("/api/faces/stamp")
+async def faces_stamp():
+    """A token the portraits use so a replaced image shows up without a hard refresh."""
+    from server.face_clips import faces
+    faces()
+    return JSONResponse({"stamp": face_stamp()})
 
 
 @app.post("/api/avatar/start")
@@ -143,6 +152,22 @@ async def avatar_token():
         "room": avatar_manager.room_name,
         "identities": avatar_manager.identities(),
     })
+
+
+SEAT_NAMES = ("Atlas", "Lyra", "Griffin", "Phoenix", "Solara")
+
+
+def with_player_names(text: str) -> str:
+    """Player 0 / P0 become Atlas, and the same for the other seats. Safe to run twice."""
+    if not text:
+        return text
+
+    def repl(match: re.Match) -> str:
+        seat = int(match.group(1))
+        return SEAT_NAMES[seat] if 0 <= seat < len(SEAT_NAMES) else match.group(0)
+
+    text = re.sub(r"\b[Pp]layers?\s+([0-4])\b", repl, text)
+    return re.sub(r"\b[Pp]([0-4])\b", repl, text)
 
 
 # ── Session: one spectator connection ────────────────────────────────
@@ -257,7 +282,7 @@ class GameSession:
     async def _prepare_audio(self, seat: int, text: str) -> Optional[str]:
         if not (self.voice and self.speed <= 2):
             return None
-        return await get_tts_audio(text, seat)
+        return await get_tts_audio(with_player_names(text), seat)
 
     async def _play_speech(self) -> None:
         while True:
@@ -315,7 +340,10 @@ class GameSession:
             clip = await render_clip(seat, wav)
             if clip:
                 await begin()
+                # The clip's own soundtrack is muted in the browser. This wav is the one play,
+                # so the line does not speak again out of the video after the mouth stops.
                 await self.send("avatar_clip", {"seat": seat, "video": base64.b64encode(clip).decode("ascii")}, seq)
+                await self.send("audio", {"speaker": seat, "audio": wav_b64, "format": "wav"}, seq)
                 await self.sleep(wav_seconds(wav) + 0.3)
                 await self.send("speaking", {"seat": seat, "active": False}, seq)
                 return
@@ -359,6 +387,8 @@ async def game_ws(ws: WebSocket):
             kind = msg.get("type")
             if kind == "list_games":
                 await session.send("game_list", {"games": list_game_files()})
+            elif kind == "start_playback":
+                session.start(run_playback(session, msg.get("events") or []))
             elif kind == "start_game":
                 if msg.get("mode") == "replay":
                     session.start(run_replay(session, msg.get("replay_file") or ""))
@@ -427,10 +457,10 @@ async def run_replay(session: GameSession, replay_file: str) -> None:
             continue
 
         if kind == "discussion":
-            data = {"turn": d["quest"], "round_num": d["round"], "speaker": d["seat"], "text": d["text"]}
+            data = {"turn": d["quest"], "round_num": d["round"], "speaker": d["seat"], "text": with_player_names(d["text"])}
             await session.send("utterance", data, seq)
         elif kind == "evil_chat":
-            await session.send("evil_chat", {"turn": d.get("quest", 0), "speaker": d["seat"], "text": d["text"]}, seq)
+            await session.send("evil_chat", {"turn": d.get("quest", 0), "speaker": d["seat"], "text": with_player_names(d["text"])}, seq)
         elif kind == "team_proposed":
             await session.send("team_proposed", {"turn": d["quest"], "round_num": d["round"],
                                                  "leader": d["leader"], "team": d["team"]}, seq)
@@ -452,11 +482,41 @@ async def run_replay(session: GameSession, replay_file: str) -> None:
             await session.send("memory_update", {"players": serialize_memories(adapter.memories)}, seq)
 
         if kind in ("discussion", "evil_chat"):
-            await session.speak(d["seat"], d["text"], seq)
+            await session.speak(d["seat"], with_player_names(d["text"]), seq)
         elif kind in ("team_proposed", "team_result", "quest_result"):
             await session.sleep(1.6)
 
     await session.send("replay_end", {"violations": adapter.state.violations if adapter.state else []})
+
+
+# ── Saved live game ──────────────────────────────────────────────────
+
+async def run_playback(session: GameSession, events: List[Any]) -> None:
+    """Replays a file exported from a live game: same messages, same graphs, voiced again."""
+    session.face_clips = False
+    if not isinstance(events, list) or not events:
+        await session.send("error", {"message": "That file has no game events."})
+        return
+    for raw in events[:4000]:
+        if not isinstance(raw, dict):
+            continue
+        kind = str(raw.get("type") or "")
+        data = dict(raw.get("data") or {})
+        seq = int(raw.get("seq") or 0)
+        if kind in ("audio", "avatar_clip", "speaking", "game_list", "human_prompt", "human_prompt_clear"):
+            continue
+        await session.gate()
+        if kind in ("utterance", "evil_chat"):
+            data["text"] = with_player_names(str(data.get("text") or ""))
+            await session.send(kind, data, seq)
+            speaker = data.get("speaker")
+            if speaker is not None:
+                await session.speak(int(speaker), data["text"], seq)
+        else:
+            await session.send(kind, data, seq)
+            if kind in ("team_proposed", "team_vote_result", "quest_result"):
+                await session.sleep(1.2)
+    await session.send("replay_end", {"violations": []})
 
 
 # ── Live ─────────────────────────────────────────────────────────────
@@ -500,9 +560,11 @@ async def run_live_game(session: GameSession, human_seat: Optional[int] = None, 
             speaker = data.get("speaker")
             # Other players already have the text and can take their turn.
             # The spectator sees the line only when this seat's audio starts.
+            data["text"] = with_player_names(str(data.get("text") or ""))
             if speaker != human_seat:
                 session.enqueue_speech(speaker, data["text"], seq, (event_type, data))
             else:
+                # They already said it, by typing or the mic. Do not voice the line back at them.
                 session.enqueue_event(event_type, data, seq)
         elif event_type in ("team_proposed", "team_vote_result", "quest_result"):
             data["votes"] = {str(p): v for p, v in data.get("votes", {}).items()}

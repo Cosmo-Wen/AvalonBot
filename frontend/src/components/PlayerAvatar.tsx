@@ -11,6 +11,7 @@ interface PlayerAvatarProps {
   videoTrack?: RemoteTrack | null;
   audioTrack?: RemoteTrack | null;
   clipUrl?: string | null;
+  faceStamp?: string;
   muted?: boolean;
   level: number;
   width: number;
@@ -51,29 +52,23 @@ function AvatarVideo({ video, audio, muted, mirror }: { video: RemoteTrack; audi
   );
 }
 
-function FaceClip({ url, muted }: { url: string; muted: boolean }) {
-  const ref = useRef<HTMLVideoElement>(null);
-  useEffect(() => {
-    const el = ref.current;
-    if (!el) return;
-    el.muted = muted;
-    el.play().catch(() => undefined);
-  }, [url, muted]);
+function FaceClip({ url }: { url: string }) {
   return (
     <video
-      ref={ref}
       src={url}
       autoPlay
+      muted
       playsInline
       className="absolute inset-0 h-full w-full object-cover object-top"
     />
   );
 }
 
-function FaceStill({ seat, onError }: { seat: number; onError: () => void }) {
+function FaceStill({ seat, stamp, onError }: { seat: number; stamp: string; onError: () => void }) {
+  const src = stamp ? `/api/face/${seat}?v=${stamp}` : `/api/face/${seat}`;
   return (
     <img
-      src={`/api/face/${seat}`}
+      src={src}
       alt=""
       draggable={false}
       className="absolute inset-0 h-full w-full object-cover object-top"
@@ -104,12 +99,13 @@ function stripTtsTokens(text: string): string {
     .trim();
 }
 
-export default function PlayerAvatar({ player, isLeader, isOnTeam, vote, showRole, videoTrack, audioTrack, clipUrl, muted = false, level, width }: PlayerAvatarProps) {
+export default function PlayerAvatar({ player, isLeader, isOnTeam, vote, showRole, videoTrack, audioTrack, clipUrl, faceStamp = "", muted = false, level, width }: PlayerAvatarProps) {
   const color = SEAT_COLORS[player.seat];
   const speaking = player.isSpeaking || level > 0.05;
   const height = Math.round(width * 1.25);
   const evil = player.side === "evil";
   const [faceFailed, setFaceFailed] = useState(false);
+  useEffect(() => setFaceFailed(false), [faceStamp]);
 
   return (
     <div className="flex select-none flex-col items-center gap-1.5" style={{ width }}>
@@ -126,9 +122,9 @@ export default function PlayerAvatar({ player, isLeader, isOnTeam, vote, showRol
       >
         <div className="relative h-full w-full overflow-hidden rounded-[0.8rem] bg-medieval-surface">
           {clipUrl ? (
-            <FaceClip url={clipUrl} muted={muted} />
+            <FaceClip url={clipUrl} />
           ) : !faceFailed ? (
-            <FaceStill seat={player.seat} onError={() => setFaceFailed(true)} />
+            <FaceStill seat={player.seat} stamp={faceStamp} onError={() => setFaceFailed(true)} />
           ) : videoTrack ? (
             <AvatarVideo video={videoTrack} audio={audioTrack} muted={muted} mirror={MIRRORED_SEATS.has(player.seat)} />
           ) : (
@@ -197,22 +193,22 @@ export default function PlayerAvatar({ player, isLeader, isOnTeam, vote, showRol
           </div>
         )}
 
-        {showRole && player.role && (
-          <div
-            className={`absolute -bottom-3 left-1/2 flex -translate-x-1/2 items-center gap-1 whitespace-nowrap rounded-full border py-0.5 pl-0.5 pr-2 text-[10px] font-display uppercase tracking-[0.1em] ${
-              evil ? "border-medieval-crimson-bright/60 bg-[#2a0d0d] text-[#f08a8a]" : player.role === "merlin" ? "border-medieval-merlin/60 bg-[#1b1433] text-[#c3b3ff]" : "border-medieval-good/60 bg-[#0d2418] text-[#7fd9a4]"
-            }`}
-          >
-            <img src={ROLE_ICON[player.role]} alt="" className="h-5 w-5 rounded-full object-cover" draggable={false} />
-            {ROLE_DISPLAY[player.role]}
-          </div>
-        )}
       </div>
 
-      <div className={`text-center ${showRole && player.role ? "mt-2" : ""}`}>
+      <div className="text-center">
         <div className="font-display text-xs uppercase tracking-[0.15em]" style={{ color: speaking ? color : "#b8a88a" }}>
           {player.name}
         </div>
+        {showRole && player.role && (
+          <div
+            className={`mx-auto mt-1 flex w-fit items-center gap-1 whitespace-nowrap rounded-full border py-0.5 pl-0.5 pr-2 text-[10px] font-display uppercase tracking-[0.1em] ${
+              evil ? "border-medieval-crimson-bright/60 bg-[#2a0d0d] text-[#f08a8a]" : player.role === "merlin" ? "border-medieval-merlin/60 bg-[#1b1433] text-[#c3b3ff]" : "border-medieval-good/60 bg-[#0d2418] text-[#7fd9a4]"
+            }`}
+          >
+            <img src={ROLE_ICON[player.role]} alt="" className="h-4 w-4 rounded-full object-cover" draggable={false} />
+            {ROLE_DISPLAY[player.role]}
+          </div>
+        )}
         <div className="font-mono text-[10px] text-medieval-silver/60">P{player.seat}</div>
       </div>
     </div>
