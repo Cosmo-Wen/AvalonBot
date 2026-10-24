@@ -368,6 +368,7 @@ class LLMAgent(Agent):
         super().set_private_info(info)
         if self._covers:
             self.memory.cover = PairBelief(self.player_id, self.num_players)
+        self._cap_errors: set = set()  # quests where the cap already rejected a clean team
 
     def _p_clean(self, team: Sequence[int]) -> float:
         r"""P(no evil on the team) under the public counting rule, from Merlin's seat."""
@@ -409,21 +410,34 @@ class LLMAgent(Agent):
         return right, total
 
     def _cap_vote(self, turn: int, round_num: int, team: List[int]) -> bool:
-        r"""Never be the most accurate good voter. Vote the truth when it's decisive (evil at match point) or
-        when it keeps Merlin's accuracy within the best Servant's; otherwise make the cheap error, rejecting
-        a clean team. An evil team is never approved to lose accuracy: that error can cost a quest."""
+        r"""Never be the most accurate good voter, without stalling the game. Vote the truth when the vote
+        is protected or keeps Merlin's accuracy within the best Servant's; otherwise make the cheap error,
+        rejecting a clean team. An evil team is never approved to lose accuracy: that error can cost a quest.
+
+        Protected (always the truth): evil on the team at match point; any vote once evil has 2 fails; the
+        4th or 5th proposal of a quest; a team Merlin is on (including its own proposal, since no Servant
+        rejects that); and any vote after this quest's one cheap error.
+        """
         clean = not set(team) & set(self.private_info.get("seen_evil", []))
         right, total = self._vote_record()
         me = self.player_id
         acc_if_true = (right.get(me, 0) + 1) / (total.get(me, 0) + 1)
         servants = [p for p in total if p != me]
         ceiling = max((right[p] / total[p] for p in servants), default=1.0)
-        if self._match_point(team):
-            approve, why = False, "decisive: evil on the team at match point"
-        elif acc_if_true <= ceiling or not clean:
-            approve, why = clean, f"true vote (accuracy {acc_if_true:.2f}, best Servant {ceiling:.2f})"
+        protected = next((why for cond, why in (
+            (self._match_point(team), "evil on the team at match point"),
+            (len(self.memory.graph.failed_teams()) >= 2, "evil has 2 fails"),
+            (round_num >= 3, "4th or 5th proposal of the quest"),
+            (me in team, "on the team"),
+            (turn in self._cap_errors, "already made this quest's cheap error"),
+        ) if cond), None)
+        if protected or acc_if_true <= ceiling or not clean:
+            approve = clean
+            why = f"protected: {protected}" if protected else f"true vote (accuracy {acc_if_true:.2f}, best Servant {ceiling:.2f})"
         else:
-            approve, why = False, f"cheap error: reject a clean team (accuracy would be {acc_if_true:.2f}, best Servant {ceiling:.2f})"
+            approve = False
+            self._cap_errors.add(turn)
+            why = f"cheap error: reject a clean team (accuracy would be {acc_if_true:.2f}, best Servant {ceiling:.2f})"
         self._record_reason(turn, round_num, "approved" if approve else "rejected", f"cap vote ({why})")
         return approve
 

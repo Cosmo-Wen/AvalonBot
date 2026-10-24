@@ -90,11 +90,17 @@ def test_cap_keeps_merlin_at_or_below_the_best_servant():
     assert asyncio.run(agent.vote_on_team(0, 0, 3, [3, 4])) is True
     # P3 and P4 (Servants) wrongly rejected the clean team; Merlin approved it (1/1 correct)
     team_vote(send, [3, 4], {0: True, 1: True, 2: True, 3: False, 4: False}, approved=True)
-    # next clean team: a true approve would keep Merlin at 2/2 while both Servants sit at 0/1, so
-    # Merlin makes the cheap error and rejects it
-    assert asyncio.run(agent.vote_on_team(0, 1, 4, [0, 4])) is False
+    # a clean team Merlin is on is protected: no Servant rejects that
+    assert asyncio.run(agent.vote_on_team(0, 1, 4, [0, 4])) is True
+    # a clean team without Merlin: a true approve would keep Merlin at 2/2 while both Servants sit at
+    # 0/1, so Merlin makes the cheap error and rejects it
+    assert asyncio.run(agent.vote_on_team(0, 1, 4, [3, 4])) is False
+    # one cheap error per quest: the next clean team this quest gets the truth
+    assert asyncio.run(agent.vote_on_team(0, 2, 4, [3, 4])) is True
     # a non-decisive team with evil: never approve evil to lose accuracy
-    assert asyncio.run(agent.vote_on_team(0, 1, 4, [0, 1])) is False
+    assert asyncio.run(agent.vote_on_team(1, 0, 4, [3, 1])) is False
+    # the 4th proposal of a quest is protected
+    assert asyncio.run(agent.vote_on_team(1, 3, 4, [3, 4])) is True
 
 
 def test_cap_votes_true_when_decisive_or_within_range():
