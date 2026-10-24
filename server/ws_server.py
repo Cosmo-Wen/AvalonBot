@@ -159,9 +159,13 @@ class GameSession:
         self.human_seat: Optional[int] = None
         self.human_agent: Optional[HumanWebAgent] = None
         self.face_clips = False
-        # Speech lags the table. A line's text is already in every player's memory
-        # before this queue plays it, so the next model call can start immediately.
+        # Players already have each line. This queue is the spectator clock:
+        # a transcript line appears when its audio starts, and later events wait
+        # behind the lines still being spoken.
         self.speech_epoch = 0
+        self._speech_pending = 0
+        self._speech_drained = asyncio.Event()
+        self._speech_drained.set()
         self._speech: asyncio.Queue = asyncio.Queue()
         self._speech_worker = asyncio.create_task(self._play_speech())
 
@@ -213,18 +217,42 @@ class GameSession:
     def drop_pending_speech(self) -> None:
         """Drops lines not yet playing. The line already in the mouth finishes."""
         self.speech_epoch += 1
+        dropped = 0
         while True:
             try:
-                _epoch, _seat, _text, _seq, prep = self._speech.get_nowait()
+                item = self._speech.get_nowait()
             except asyncio.QueueEmpty:
-                return
-            if not prep.done():
-                prep.cancel()
+                break
+            dropped += 1
+            if item[0] == "audio":
+                prep = item[5]
+                if not prep.done():
+                    prep.cancel()
+        self._speech_pending -= dropped
+        if self._speech_pending <= 0:
+            self._speech_pending = 0
+            self._speech_drained.set()
 
-    def enqueue_speech(self, seat: int, text: str, seq: int) -> None:
-        """Starts synthesis now and plays it in order, without holding the game."""
+    def _enqueue(self, item: tuple) -> None:
+        self._speech_pending += 1
+        self._speech_drained.clear()
+        self._speech.put_nowait(item)
+
+    def enqueue_speech(self, seat: int, text: str, seq: int, reveal: Optional[tuple] = None) -> None:
+        """Starts synthesis now. The transcript for this line is `reveal`, shown when audio starts."""
         prep = asyncio.create_task(self._prepare_audio(seat, text))
-        self._speech.put_nowait((self.speech_epoch, seat, text, seq, prep))
+        self._enqueue(("audio", self.speech_epoch, seat, text, seq, prep, reveal))
+
+    def enqueue_event(self, event_type: str, data: Dict[str, Any], seq: int, pace: float = 0) -> None:
+        """Shows this after every line already queued, so the transcript stays in spoken order."""
+        self._enqueue(("event", self.speech_epoch, event_type, data, seq, pace))
+
+    async def wait_spoken(self) -> None:
+        await self._speech_drained.wait()
+
+    async def wait_speech_idle(self) -> None:
+        """A human prompt waits until the lines already queued have been spoken."""
+        await self.wait_spoken()
 
     async def _prepare_audio(self, seat: int, text: str) -> Optional[str]:
         if not (self.voice and self.speed <= 2):
@@ -233,38 +261,67 @@ class GameSession:
 
     async def _play_speech(self) -> None:
         while True:
-            epoch, seat, text, seq, prep = await self._speech.get()
-            if epoch != self.speech_epoch:
-                if not prep.done():
-                    prep.cancel()
-                continue
+            item = await self._speech.get()
             try:
-                wav_b64 = await prep
-            except asyncio.CancelledError:
-                raise
-            except Exception:
-                wav_b64 = None
-            if epoch != self.speech_epoch:
-                continue
-            await self._emit_audio(seat, text, seq, wav_b64)
+                kind, epoch = item[0], item[1]
+                if epoch != self.speech_epoch:
+                    if kind == "audio" and not item[5].done():
+                        item[5].cancel()
+                    continue
+                if kind == "event":
+                    _, _, event_type, data, seq, pace = item
+                    await self.send(event_type, data, seq)
+                    if pace:
+                        await self.sleep(pace)
+                    continue
+                _, _, seat, text, seq, prep, reveal = item
+                try:
+                    wav_b64 = await prep
+                except asyncio.CancelledError:
+                    raise
+                except Exception:
+                    wav_b64 = None
+                if epoch != self.speech_epoch:
+                    continue
+                await self._emit_audio(seat, text, seq, wav_b64, reveal)
+            finally:
+                self._speech_pending -= 1
+                if self._speech_pending <= 0:
+                    self._speech_pending = 0
+                    self._speech_drained.set()
 
     async def speak(self, seat: int, text: str, seq: int) -> None:
         """Voices one line and waits until it finishes. Replay stays in lockstep this way."""
         await self._emit_audio(seat, text, seq, await self._prepare_audio(seat, text))
 
-    async def _emit_audio(self, seat: int, text: str, seq: int, wav_b64: Optional[str]) -> None:
-        """Through the seat's avatar if it is running, else over this socket."""
-        await self.send("speaking", {"seat": seat, "active": True}, seq)
+    async def _emit_audio(
+        self,
+        seat: int,
+        text: str,
+        seq: int,
+        wav_b64: Optional[str],
+        reveal: Optional[tuple] = None,
+    ) -> None:
+        """Plays one line. `reveal` is the transcript entry, sent as the audio starts."""
+
+        async def begin() -> None:
+            if reveal is not None:
+                event_type, payload = reveal
+                await self.send(event_type, payload, seq)
+            await self.send("speaking", {"seat": seat, "active": True}, seq)
+
         wav = base64.b64decode(wav_b64) if wav_b64 else b""
         if wav and self.face_clips:
             clip = await render_clip(seat, wav)
             if clip:
+                await begin()
                 await self.send("avatar_clip", {"seat": seat, "video": base64.b64encode(clip).decode("ascii")}, seq)
                 await self.sleep(wav_seconds(wav) + 0.3)
                 await self.send("speaking", {"seat": seat, "active": False}, seq)
                 return
+        await begin()
         if wav and avatar_manager.has_seat(seat):
-            await avatar_manager.speak(seat, base64.b64decode(wav_b64))
+            await avatar_manager.speak(seat, wav)
         elif wav_b64:
             await self.send("audio", {"speaker": seat, "audio": wav_b64, "format": "wav"}, seq)
             await self.sleep(wav_seconds(wav) + 0.3)
@@ -312,6 +369,7 @@ async def game_ws(ws: WebSocket):
             elif kind == "human_action_response":
                 session.resolve_human_action(msg.get("action", ""), msg.get("data", {}))
             elif kind == "stop":
+                session.drop_pending_speech()
                 if session.task is not None:
                     session.task.cancel()
             elif kind == "settings":
@@ -439,28 +497,28 @@ async def run_live_game(session: GameSession, human_seat: Optional[int] = None, 
         await session.gate()
         seq = int(data.pop("seq", 0))
         if event_type in ("utterance", "evil_chat"):
-            await session.send(event_type, data, seq)
             speaker = data.get("speaker")
-            # The text is already in the other players' memory. Voice it in the
-            # background so the next seat can start its model call now.
+            # Other players already have the text and can take their turn.
+            # The spectator sees the line only when this seat's audio starts.
             if speaker != human_seat:
-                session.enqueue_speech(speaker, data["text"], seq)
+                session.enqueue_speech(speaker, data["text"], seq, (event_type, data))
+            else:
+                session.enqueue_event(event_type, data, seq)
         elif event_type in ("team_proposed", "team_vote_result", "quest_result"):
             data["votes"] = {str(p): v for p, v in data.get("votes", {}).items()}
-            await session.send(event_type, data, seq)
-            await session.send("memory_update", {"players": serialize_memories(memories())}, seq)
-            await session.sleep(1.6)
+            session.enqueue_event(event_type, data, seq, pace=1.6)
+            session.enqueue_event("memory_update", {"players": serialize_memories(memories())}, seq)
         elif event_type == "assassination":
-            await session.send("assassination", data, seq)
-            await session.sleep(2.0)
+            session.enqueue_event("assassination", data, seq, pace=2.0)
 
     runner = AvalonGameRunner(agents=agents, tts_client=None, verbose=False, on_event=on_event)
     metrics = await runner.run_game()
-    await session.send("memory_update", {"players": serialize_memories(memories())}, runner.seq + 1)
-    await session.send("game_over", {
+    session.enqueue_event("memory_update", {"players": serialize_memories(memories())}, runner.seq + 1)
+    session.enqueue_event("game_over", {
         "winner": "Good" if metrics.good_victory else "Evil",
         "reason": metrics.win_reason,
     }, runner.seq + 1)
+    await session.wait_spoken()
 
 
 if __name__ == "__main__":

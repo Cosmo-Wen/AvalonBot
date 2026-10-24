@@ -51,6 +51,8 @@ class HumanWebAgent(Agent):
             self.pending_future.set_result(data)
 
     async def team_discussion(self, turn: int, round_num: int, leader: int, team_size: int) -> str:
+        if hasattr(self.session, "wait_speech_idle"):
+            await self.session.wait_speech_idle()
         prompt_data = {
             "action": "discussion",
             "seat": self.player_id,
@@ -73,6 +75,8 @@ class HumanWebAgent(Agent):
             await self.session.send("human_prompt_clear", {"action": "discussion"})
 
     async def propose_team(self, turn: int, team_size: int) -> List[int]:
+        if hasattr(self.session, "wait_speech_idle"):
+            await self.session.wait_speech_idle()
         prompt_data = {
             "action": "propose_team",
             "seat": self.player_id,
@@ -94,6 +98,8 @@ class HumanWebAgent(Agent):
             await self.session.send("human_prompt_clear", {"action": "propose_team"})
 
     async def vote_on_team(self, turn: int, round_num: int, leader: int, team: List[int]) -> bool:
+        if hasattr(self.session, "wait_speech_idle"):
+            await self.session.wait_speech_idle()
         prompt_data = {
             "action": "vote_on_team",
             "seat": self.player_id,

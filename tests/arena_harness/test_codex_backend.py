@@ -30,9 +30,7 @@ def test_events_and_errors():
 
 
 def test_subprocess_tool_adapter(tmp_path, monkeypatch):
-    stub = tmp_path / "codex"
-    stub.write_text(f'''#!{sys.executable}
-import json, os, sys
+    code = f'''import json, os, sys
 args = sys.argv
 assert os.getcwd() != {str(tmp_path)!r}
 assert "OPENAI_API_KEY" not in os.environ
@@ -43,8 +41,16 @@ schema = json.load(open(args[args.index("--output-schema") + 1]))
 assert schema["properties"]["name"]["enum"] == ["vote_on_team"]
 print(json.dumps({{"type": "item.completed", "item": {{"type": "agent_message", "text": json.dumps({{"name": "vote_on_team", "arguments": '{{"approve": true}}'}})}}}}))
 print(json.dumps({{"type": "turn.completed", "usage": {{"input_tokens": 2, "output_tokens": 4}}}}))
-''')
-    stub.chmod(0o755)
+'''
+    if sys.platform == "win32":
+        py_stub = tmp_path / "codex_script.py"
+        py_stub.write_text(code)
+        stub = tmp_path / "codex.cmd"
+        stub.write_text(f'@"{sys.executable}" "{py_stub}" %*\n')
+    else:
+        stub = tmp_path / "codex"
+        stub.write_text(f"#!{sys.executable}\n" + code)
+        stub.chmod(0o755)
     monkeypatch.setenv("OPENAI_API_KEY", "unused")
     backend = make_backend(cfg(codex_bin=str(stub)).seats[0], cfg(codex_bin=str(stub)), 0)
     from avalon.tools import get_tool
