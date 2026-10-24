@@ -21,6 +21,8 @@ import aiohttp
 
 from dotenv import load_dotenv
 
+from speech.budget import global_budget_tracker
+
 load_dotenv()
 
 try:
@@ -31,11 +33,11 @@ except ImportError:
 
 
 DEFAULT_SEAT_VOICES: Dict[int, str] = {
-    0: os.getenv("BOSON_VOICE_0", "default"),
-    1: os.getenv("BOSON_VOICE_1", "default"),
-    2: os.getenv("BOSON_VOICE_2", "default"),
-    3: os.getenv("BOSON_VOICE_3", "default"),
-    4: os.getenv("BOSON_VOICE_4", "default"),
+    0: os.getenv("BOSON_VOICE_0", "marcus"),   # Minion: deep authoritative male
+    1: os.getenv("BOSON_VOICE_1", "eleanor"),  # Loyal Servant 1: articulate poised female
+    2: os.getenv("BOSON_VOICE_2", "jake"),     # Loyal Servant 2: high-energy reactive male
+    3: os.getenv("BOSON_VOICE_3", "oliver"),   # Assassin: calm strategic male
+    4: os.getenv("BOSON_VOICE_4", "chloe"),    # Merlin: warm guidance female
 }
 
 # Verified Boson Higgs Control Tag Profiles per seat:
@@ -161,34 +163,45 @@ class HiggsTTSClient:
 
             formatted_text = f"{prefix_tags}{text}"
 
-        # If API key is present, call live Boson API
+        # Check if API key is present and budget allows
         if self.api_key:
-            headers = {
-                "Authorization": f"Bearer {self.api_key}",
-                "Content-Type": "application/json",
-            }
-            payload = {
-                "model": self.model,
-                "input": formatted_text,
-                "voice": voice,
-                "response_format": "wav",
-            }
+            if not global_budget_tracker.can_call():
+                print(f"[Higgs TTS Notice] Budget cap of {global_budget_tracker.max_calls} calls reached. Falling back to offline tone synthesis.")
+            else:
+                headers = {
+                    "Authorization": f"Bearer {self.api_key}",
+                    "Content-Type": "application/json",
+                }
+                payload = {
+                    "model": self.model,
+                    "input": formatted_text,
+                    "voice": voice,
+                    "response_format": "wav",
+                }
 
-            try:
-                async with aiohttp.ClientSession() as session:
-                    async with session.post(self.BASE_URL, json=payload, headers=headers) as resp:
-                        if resp.status == 200:
-                            audio_bytes = await resp.read()
-                            if save_path:
-                                save_path.write_bytes(audio_bytes)
-                            return audio_bytes
-                        else:
-                            err_text = await resp.text()
-                            print(f"[Higgs TTS Error] API returned HTTP {resp.status} for voice '{voice}': {err_text}")
-            except Exception as e:
-                print(f"[Higgs TTS Error] Connection failed: {e}")
+                try:
+                    async with aiohttp.ClientSession() as session:
+                        async with session.post(self.BASE_URL, json=payload, headers=headers) as resp:
+                            if resp.status == 200:
+                                audio_bytes = await resp.read()
+                                if save_path:
+                                    save_path.write_bytes(audio_bytes)
+                                global_budget_tracker.record_call(
+                                    endpoint=self.BASE_URL,
+                                    voice=voice,
+                                    text_length=len(formatted_text),
+                                    status_code=resp.status,
+                                    byte_size=len(audio_bytes),
+                                    extra={"seat": seat, "model": self.model},
+                                )
+                                return audio_bytes
+                            else:
+                                err_text = await resp.text()
+                                print(f"[Higgs TTS Error] API returned HTTP {resp.status} for voice '{voice}': {err_text}")
+                except Exception as e:
+                    print(f"[Higgs TTS Error] Connection failed: {e}")
 
-        # Fallback to local audio tone generation if key missing or failed
+        # Fallback to local audio tone generation if key missing, budget exhausted, or failed
         if save_path:
             freq = SEAT_TONE_FREQS.get(seat, 440)
             self._generate_offline_wav(save_path, freq=freq)
