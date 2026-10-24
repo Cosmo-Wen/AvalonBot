@@ -140,15 +140,8 @@ class HeuristicAgent(Agent):
     """
 
     async def team_discussion(self, turn: int, round_num: int, leader: int, team_size: int) -> str:
-        # Leader utterances (firm, determined, resonant)
-        if self.player_id == leader:
-            leader_templates = [
-                f"Listen up, table! As leader for Quest {turn + 1}, we need a clean victory. I'm selecting {team_size} players with proven loyalty!",
-                f"We cannot afford mistakes here! <|prosody:pause|>As leader, I've watched past votes closely, and I'm drafting a disciplined team of size {team_size}.",
-                f"This is our moment! As leader for Quest {turn + 1}, I am taking responsibility and proposing {team_size} players I truly trust.",
-                f"The entire kingdom is watching us! As leader, I will pick {team_size} players who will actually vote Pass.",
-            ]
-            return self.rng.choice(leader_templates)
+        # Check if any quest has failed so far in the game
+        any_failed_quest = any("FAILED" in h for h in self.chat_history)
 
         top_suspect = 0
         safest_partner = (self.player_id + 1) % self.num_players
@@ -160,40 +153,80 @@ class HeuristicAgent(Agent):
             if safest:
                 safest_partner = safest[0]
 
-        # Merlin utterances (whispered, contemplative, cryptic guidance)
+        # Leader utterances
+        if self.player_id == leader:
+            if any_failed_quest:
+                leader_templates = [
+                    f"<|emotion:anger|><|prosody:expressiveness_high|>The previous quest was an absolute disaster! <|prosody:pause|>As leader, I will not allow traitors to sabotage Quest {turn + 1}. I'm drafting {team_size} players with clean records!",
+                    f"<|style:shouting|><|emotion:anger|><|prosody:expressiveness_high|>Listen to me right now! <|prosody:pause|>We cannot afford another failed mission! I am taking charge and proposing {team_size} players who will actually vote Pass!",
+                    f"<|emotion:determination|><|prosody:expressiveness_high|>The kingdom is on the brink of collapse! As leader for Quest {turn + 1}, I have reviewed past votes and I am selecting a disciplined team of size {team_size}.",
+                ]
+            else:
+                leader_templates = [
+                    f"<|emotion:determination|><|prosody:expressiveness_high|>Listen up, table! As leader for Quest {turn + 1}, we need a clean victory. I'm selecting {team_size} players with proven loyalty!",
+                    f"<|emotion:enthusiasm|><|prosody:expressiveness_high|>This is our moment! <|prosody:pause|>As leader for Quest {turn + 1}, I am taking responsibility and proposing {team_size} players I genuinely trust.",
+                    f"<|emotion:determination|><|prosody:expressiveness_high|>The entire realm is watching us! As leader, I will pick {team_size} players who will fight honorably for Arthur.",
+                ]
+            return self.rng.choice(leader_templates)
+
+        # Merlin utterances (whispered contemplation or tense warning)
         if self.role == Role.MERLIN:
-            merlin_templates = [
-                f"Listen closely... <|prosody:pause|>I advise extreme caution regarding Player {top_suspect}. Look at their voting record!",
-                f"If we want Quest {turn + 1} to succeed, Player {safest_partner} is a far safer choice than Player {top_suspect}. Do not walk blindly into this!",
-                f"Wait... <|prosody:pause|>look at how the approvals lined up earlier. We cannot afford to rush into another trap.",
-                f"I urge the leader: keep this team clean! Player {top_suspect}'s claims do not add up at all.",
-            ]
+            if any_failed_quest:
+                merlin_templates = [
+                    f"<|style:whispering|><|emotion:contemplation|><|prosody:expressiveness_high|>Listen closely... <|prosody:pause|>Do not let anger cloud your judgment. Look at who approved that failed mission. Player {top_suspect} is leading us into a trap.",
+                    f"<|emotion:anger|><|prosody:expressiveness_high|>Do not be blind! <|prosody:pause|>If you put Player {top_suspect} on this quest, Arthur's kingdom will fall to the shadows!",
+                    f"<|style:whispering|><|emotion:contemplation|><|prosody:expressiveness_high|>The stars warn of grave betrayal... Player {safest_partner} is far safer than Player {top_suspect}. Do not ignore this warning.",
+                ]
+            else:
+                merlin_templates = [
+                    f"<|style:whispering|><|emotion:contemplation|><|prosody:expressiveness_high|>Listen closely... <|prosody:pause|>I advise extreme caution regarding Player {top_suspect}. Look at their voting record!",
+                    f"<|style:whispering|><|emotion:contemplation|><|prosody:expressiveness_high|>If we want Quest {turn + 1} to succeed, Player {safest_partner} is a much safer choice than Player {top_suspect}. Tread carefully.",
+                    f"<|emotion:contemplation|><|prosody:expressiveness_high|>Wait... <|prosody:pause|>look at how the approvals lined up earlier. We cannot afford to rush into another trap.",
+                ]
             return self.rng.choice(merlin_templates)
 
-        # Loyal Servant utterances (passionate, high-energy, indignant questioning)
+        # Loyal Servant utterances (high-octane anger, outrage over sabotage, fierce loyalty)
         if self.side:
-            servant_templates = [
-                f"Wait, hold on! <|prosody:pause|>Player {top_suspect}'s actions make me furious! Why are they supporting that risky lineup?!",
-                f"I swear by Arthur that I am 100% loyal! Put me on this mission and we will bring home a Pass!",
-                f"We only need three successful quests to win this game! <|prosody:pause|>We must vote down any team that includes Player {top_suspect}!",
-                f"Look at the evidence, people! I trust Player {safest_partner} ten times more than Player {top_suspect}!",
-            ]
             if round_num >= 3:
-                servant_templates.append(f"We are at round {round_num + 1} and right at the hammer! <|prosody:pause|>We have to unite behind a loyal team right now!")
+                # Nearing the hammer: panic & fierce urgency
+                servant_templates = [
+                    f"<|emotion:fear|><|prosody:speed_fast|><|prosody:expressiveness_high|>Wait! <|prosody:pause|>We are at round {round_num + 1} and right at the hammer! If this team fails, evil wins the entire game! We have to vote carefully!",
+                    f"<|style:shouting|><|emotion:anger|><|prosody:expressiveness_high|>This is the hammer round! <|prosody:pause|>Do NOT let Player {top_suspect} onto this mission, or Arthur's realm is finished!",
+                ]
+            elif any_failed_quest:
+                # Post-sabotage fury & direct accusation
+                servant_templates = [
+                    f"<|style:shouting|><|emotion:anger|><|prosody:expressiveness_high|>Someone backstabbed Arthur on that mission! <|prosody:pause|>Player {top_suspect}, you supported that lineup! How dare you sit there looking innocent?!",
+                    f"<|emotion:anger|><|prosody:speed_fast|><|prosody:expressiveness_high|>I am furious! <|prosody:pause|>We were sabotaged! Stop making excuses for Player {top_suspect} and look at the evidence!",
+                    f"<|emotion:anger|><|prosody:expressiveness_high|>I swear by Arthur that I am 100% loyal! Put me on this mission if you want a Pass, and keep Player {top_suspect} off!",
+                ]
+            else:
+                # Early game earnest questioning
+                servant_templates = [
+                    f"<|emotion:anger|><|prosody:speed_fast|><|prosody:expressiveness_high|>Wait, hold on! <|prosody:pause|>Player {top_suspect}'s actions make me suspicious! Why are they supporting that risky lineup?!",
+                    f"<|emotion:enthusiasm|><|prosody:expressiveness_high|>I know with certainty that my heart is loyal to the King! Put me on the field and we will bring home a Pass!",
+                    f"<|emotion:determination|><|prosody:expressiveness_high|>We only need three clean passes to win. I trust Player {safest_partner} ten times more than Player {top_suspect}!",
+                ]
             return self.rng.choice(servant_templates)
 
-        # Evil utterances (Minion / Assassin: feigning outrage, mocking, deflecting onto innocent players)
+        # Evil utterances (Minion / Assassin: shouting defense, mocking amusement, feigning betrayal)
         else:
             seen_evil = self.private_info.get("seen_evil", [])
-            # Pick a good player to deflect blame onto
             innocent_targets = [p for p in range(self.num_players) if p not in seen_evil and p != self.player_id]
             target = self.rng.choice(innocent_targets) if innocent_targets else top_suspect
-            evil_templates = [
-                f"Are you seriously accusing me?! <|prosody:pause|>I have fought honorably for Arthur from day one! You're letting the real spies escape!",
-                f"<|sfx:laughter|>Haha! <|prosody:pause|>Why is everyone ignoring Player {target}? Their behavior has been suspect from the very first round!",
-                f"Stop pointing fingers at me! <|prosody:pause|>Player {target} is deflecting attention because they know their own voting record is dirty!",
-                f"I am ready to march right now and prove my loyalty on the battlefield! Put me on the quest team!",
-            ]
+
+            if any_failed_quest:
+                evil_templates = [
+                    f"<|style:shouting|><|emotion:anger|><|prosody:expressiveness_high|>How dare you scream at me?! <|prosody:pause|>I put my life on the line for Arthur while Player {target} sat back and manipulated everyone!",
+                    f"<|emotion:amusement|><|prosody:speed_slow|><|prosody:expressiveness_high|><|sfx:laughter|>Haha! <|prosody:pause|>Are you seriously pointing at me? You are blinded by paranoia while the real traitor, Player {target}, walks free!",
+                    f"<|emotion:anger|><|prosody:speed_fast|><|prosody:expressiveness_high|>Stop lying right to my face! <|prosody:pause|>Player {target} is deflecting blame onto me because their own record is filthy!",
+                ]
+            else:
+                evil_templates = [
+                    f"<|emotion:anger|><|prosody:expressiveness_high|>Are you seriously accusing me?! <|prosody:pause|>I have fought honorably for Arthur from day one! You're letting the real spies escape!",
+                    f"<|emotion:amusement|><|prosody:speed_slow|><|prosody:expressiveness_high|><|sfx:laughter|>Haha! <|prosody:pause|>Why is everyone ignoring Player {target}? Their behavior has been suspect from the very start!",
+                    f"<|emotion:determination|><|prosody:expressiveness_high|>I am ready to march right now and prove my loyalty on the battlefield! Put me on the quest team!",
+                ]
             return self.rng.choice(evil_templates)
 
     async def propose_team(self, turn: int, team_size: int) -> List[int]:

@@ -237,8 +237,13 @@ class HiggsTTSClient:
         chosen_emotion = emotion or profile.get("emotion")
         chosen_prosody = prosody or profile.get("prosody", ["expressiveness_high"])
 
-        tag_summary = f"Style: {chosen_style or 'normal'}, Emotion: {chosen_emotion}, Prosody: {chosen_prosody}"
-        print(f"  [Higgs TTS] Synthesizing Player {seat} ({tag_summary})...")
+        if text.startswith("<|"):
+            tag_end = text.rfind("|>")
+            active_tags = text[:tag_end + 2] if tag_end != -1 else ""
+            print(f"  [Higgs TTS] Synthesizing Player {seat} (Active Tags: {active_tags})...")
+        else:
+            tag_summary = f"Style: {chosen_style or 'normal'}, Emotion: {chosen_emotion}, Prosody: {chosen_prosody}"
+            print(f"  [Higgs TTS] Synthesizing Player {seat} ({tag_summary})...")
 
         # Synthesize audio
         await self.synthesize(
