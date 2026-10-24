@@ -77,16 +77,26 @@ class SpeechIntentCompiler:
 
         # 2. Resolve and clamp Prosody
         if intent.prosody:
-            norm_prosody = intent.prosody.strip().lower()
-            # Normalize legacy token
-            if norm_prosody == "expressiveness_high":
-                norm_prosody = "expressive_high"
-            if norm_prosody in VALID_PROSODY:
-                tags.append(f"<|prosody:{norm_prosody}|>")
+            prosody_items = intent.prosody if isinstance(intent.prosody, list) else [intent.prosody]
+            for p_item in prosody_items:
+                if not p_item:
+                    continue
+                norm_prosody = str(p_item).strip().lower()
+                # Normalize legacy token
+                if norm_prosody == "expressiveness_high":
+                    norm_prosody = "expressive_high"
+                if norm_prosody in VALID_PROSODY:
+                    tags.append(f"<|prosody:{norm_prosody}|>")
 
         # 3. Resolve Style
-        if intent.style and intent.style.strip().lower() in VALID_STYLES:
-            tags.append(f"<|style:{intent.style.strip().lower()}|>")
+        if intent.style:
+            style_items = intent.style if isinstance(intent.style, list) else [intent.style]
+            for s_item in style_items:
+                if not s_item:
+                    continue
+                norm_style = str(s_item).strip().lower()
+                if norm_style in VALID_STYLES:
+                    tags.append(f"<|style:{norm_style}|>")
 
         # 4. Resolve Sound Effects with required lexical cues
         prefix_sfx = ""

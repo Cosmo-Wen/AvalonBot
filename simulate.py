@@ -41,6 +41,29 @@ async def main():
     print(f"  Boson API Budget:  {global_budget_tracker.remaining_budget()} calls remaining (cap: {global_budget_tracker.max_calls})")
     print("=" * 60)
 
+    # Check for recorded game transcript replay
+    if "--replay" in sys.argv:
+        jsonl_path = "experiments/avalon-llm-haiku-pilot/game4-all-fixes/games/game_00000.jsonl"
+        r_idx = sys.argv.index("--replay")
+        if r_idx + 1 < len(sys.argv) and not sys.argv[r_idx + 1].startswith("--"):
+            jsonl_path = sys.argv[r_idx + 1]
+        from avalon.voice_replay import VoiceReplayRunner
+
+        filter_quest = None
+        if "--quest" in sys.argv:
+            try: filter_quest = int(sys.argv[sys.argv.index("--quest") + 1])
+            except (IndexError, ValueError): pass
+
+        max_lines = None
+        if "--max-lines" in sys.argv:
+            try: max_lines = int(sys.argv[sys.argv.index("--max-lines") + 1])
+            except (IndexError, ValueError): pass
+
+        tts_client = HiggsTTSClient(play_audio=enable_playback)
+        runner = VoiceReplayRunner(tts_client)
+        await runner.replay_game(jsonl_path=jsonl_path, filter_quest=filter_quest, max_utterances=max_lines)
+        return
+
     # Initialize Boson Higgs TTS client
     tts_client = HiggsTTSClient(play_audio=enable_playback)
     pipeline = AudioPipeline(tts_client=tts_client) if use_pipeline else None
