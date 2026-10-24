@@ -14,60 +14,116 @@ export default function HumanActionModal({ prompt, onRespond }: HumanActionModal
 
   // State for discussion utterance
   const [discussionText, setDiscussionText] = useState("");
-  const [isListening, setIsListening] = useState(false);
-  const [speechSupported, setSpeechSupported] = useState(false);
+  const [isRecording, setIsRecording] = useState(false);
+  const [micStatus, setMicStatus] = useState<string | null>(null);
   const [speakVoice, setSpeakVoice] = useState(true);
   const recognitionRef = useRef<any>(null);
+  const mediaStreamRef = useRef<MediaStream | null>(null);
 
+  // Clean up any active audio stream / recognition when unmounting
   useEffect(() => {
+    return () => {
+      if (recognitionRef.current) {
+        try {
+          recognitionRef.current.abort();
+        } catch {}
+      }
+      if (mediaStreamRef.current) {
+        try {
+          mediaStreamRef.current.getTracks().forEach((t) => t.stop());
+        } catch {}
+      }
+    };
+  }, []);
+
+  const startPushToTalk = async () => {
+    setMicStatus(null);
     const SpeechRecognition =
       (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
+
+    // 1. Explicitly request microphone stream so browser prompts user
+    try {
+      if (navigator.mediaDevices && navigator.mediaDevices.getUserMedia) {
+        const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+        mediaStreamRef.current = stream;
+      }
+    } catch (err: any) {
+      console.warn("Microphone permission error:", err);
+      setMicStatus("Microphone permission denied. Please allow microphone access in your browser bar.");
+      return;
+    }
+
+    // 2. Start Speech Recognition
     if (SpeechRecognition) {
-      setSpeechSupported(true);
       try {
+        if (recognitionRef.current) {
+          try {
+            recognitionRef.current.abort();
+          } catch {}
+        }
         const recognition = new SpeechRecognition();
-        recognition.continuous = false;
+        recognition.continuous = true;
         recognition.interimResults = true;
         recognition.lang = "en-US";
 
         recognition.onresult = (event: any) => {
-          const transcript = Array.from(event.results)
-            .map((r: any) => r[0].transcript)
-            .join("");
-          if (transcript) {
-            setDiscussionText(transcript);
+          let text = "";
+          for (let i = 0; i < event.results.length; i++) {
+            text += event.results[i][0].transcript + " ";
+          }
+          if (text.trim()) {
+            setDiscussionText(text.trim());
+          }
+        };
+
+        recognition.onerror = (event: any) => {
+          console.warn("Speech recognition error:", event.error);
+          if (event.error === "not-allowed") {
+            setMicStatus("Microphone blocked. Please click the lock/camera icon in your address bar to allow mic.");
+          } else if (event.error === "network") {
+            setMicStatus("Browser speech service network issue. You can still type or pick suggestions below.");
           }
         };
 
         recognition.onend = () => {
-          setIsListening(false);
+          // Keep isRecording state managed by user release
         };
 
-        recognition.onerror = () => {
-          setIsListening(false);
-        };
-
+        recognition.start();
         recognitionRef.current = recognition;
-      } catch (err) {
-        console.warn("Speech recognition initialization failed:", err);
+        setIsRecording(true);
+      } catch (err: any) {
+        console.warn("Speech recognition start failed:", err);
+        setMicStatus("Could not start speech recognition. You can type or use suggestions below.");
+        setIsRecording(true);
       }
+    } else {
+      setMicStatus("Web Speech API not supported in this browser. Please use Chrome/Edge or type below.");
+      setIsRecording(true);
     }
-  }, []);
+  };
 
-  const toggleListening = () => {
-    if (!recognitionRef.current) return;
-    if (isListening) {
+  const stopPushToTalk = () => {
+    if (recognitionRef.current) {
       try {
         recognitionRef.current.stop();
       } catch {}
-      setIsListening(false);
-    } else {
+      recognitionRef.current = null;
+    }
+    if (mediaStreamRef.current) {
       try {
-        recognitionRef.current.start();
-        setIsListening(true);
-      } catch (err) {
-        console.warn("Speech recognition error:", err);
-      }
+        mediaStreamRef.current.getTracks().forEach((t) => t.stop());
+      } catch {}
+      mediaStreamRef.current = null;
+    }
+    setIsRecording(false);
+  };
+
+  const togglePushToTalk = () => {
+    if (isRecording) {
+      stopPushToTalk();
+    } else {
+      void startPushToTalk();
     }
   };
 
@@ -95,17 +151,15 @@ export default function HumanActionModal({ prompt, onRespond }: HumanActionModal
     onRespond("vote_on_quest", { vote: pass });
   };
 
-  const handleDiscussionSubmit = (e?: React.FormEvent, directText?: string) => {
+  const handleDiscussionSubmit = (e?: React.FormEvent) => {
     if (e) e.preventDefault();
-    if (isListening && recognitionRef.current) {
-      try {
-        recognitionRef.current.stop();
-      } catch {}
-      setIsListening(false);
+    stopPushToTalk();
+    const finalTxt = discussionText.trim();
+    if (!finalTxt) {
+      return;
     }
-    const finalTxt = (directText !== undefined ? directText : discussionText).trim();
     onRespond("discussion", {
-      text: finalTxt || `I am a loyal servant of Arthur and want what is best for the realm.`,
+      text: finalTxt,
       speak_audio: speakVoice,
     });
   };
@@ -329,7 +383,7 @@ export default function HumanActionModal({ prompt, onRespond }: HumanActionModal
 
         {/* ── 4. DISCUSSION ───────────────────────────────────── */}
         {action === "discussion" && (
-          <form onSubmit={handleDiscussionSubmit} className="flex flex-col items-center gap-3.5 text-center w-full">
+          <form onSubmit={handleDiscussionSubmit} className="flex flex-col items-center gap-3 text-center w-full">
             <div className="flex h-12 w-12 items-center justify-center rounded-full bg-medieval-gold/15 text-2xl border border-medieval-gold/30">
               💬
             </div>
@@ -342,46 +396,60 @@ export default function HumanActionModal({ prompt, onRespond }: HumanActionModal
               </p>
             </div>
 
-            {/* Microphone Voice Button */}
-            {speechSupported && (
-              <div className="w-full">
-                <button
-                  type="button"
-                  onClick={toggleListening}
-                  className={`flex items-center justify-center gap-2.5 w-full rounded-2xl py-2.5 px-4 font-display text-xs font-bold transition-all duration-300 border ${
-                    isListening
-                      ? "border-medieval-crimson-bright bg-medieval-crimson-bright/25 text-medieval-crimson-bright shadow-lg shadow-medieval-crimson-bright/30 animate-pulse"
-                      : "border-medieval-gold/40 bg-medieval-gold/10 text-medieval-gold hover:bg-medieval-gold/20 hover:border-medieval-gold/70"
-                  }`}
-                >
-                  <span className="text-base">{isListening ? "🔴" : "🎙️"}</span>
-                  <span>
-                    {isListening
-                      ? "Listening... Speak into your mic (click to stop)"
-                      : "Click to Speak with Microphone"}
+            {/* Push-to-Talk Microphone Button */}
+            <div className="w-full">
+              <button
+                type="button"
+                onMouseDown={startPushToTalk}
+                onMouseUp={stopPushToTalk}
+                onTouchStart={startPushToTalk}
+                onTouchEnd={stopPushToTalk}
+                onClick={togglePushToTalk}
+                className={`flex items-center justify-center gap-3 w-full rounded-2xl py-3 px-4 font-display text-xs font-bold transition-all duration-200 border select-none cursor-pointer ${
+                  isRecording
+                    ? "border-medieval-crimson-bright bg-medieval-crimson-bright/30 text-white shadow-xl shadow-medieval-crimson-bright/40 scale-[1.01] ring-2 ring-medieval-crimson-bright animate-pulse"
+                    : "border-medieval-gold/50 bg-medieval-gold/15 text-medieval-gold hover:bg-medieval-gold/25 hover:border-medieval-gold active:scale-98"
+                }`}
+              >
+                <span className="text-xl">{isRecording ? "🔴" : "🎙️"}</span>
+                <div className="flex flex-col text-left">
+                  <span className="text-xs uppercase tracking-wider font-bold">
+                    {isRecording ? "Recording... (Release or Click to Stop)" : "Push-to-Talk (Hold or Click to Speak)"}
                   </span>
-                </button>
-              </div>
-            )}
+                  <span className="text-[10px] font-normal text-medieval-silver/80">
+                    {isRecording ? "Listening to your microphone... transcribing live" : "Press & hold (or click) to speak with your microphone"}
+                  </span>
+                </div>
+              </button>
+
+              {micStatus && (
+                <div className="mt-2 rounded-xl border border-medieval-crimson-bright/40 bg-medieval-crimson-bright/15 p-2 text-center font-body text-[11px] text-[#f08a8a]">
+                  ⚠️ {micStatus}
+                </div>
+              )}
+            </div>
 
             {/* Statement Input Box */}
             <div className="w-full text-left">
-              <input
-                type="text"
+              <label className="font-display text-[10px] tracking-wider text-medieval-silver/60 uppercase block mb-1">
+                Your Statement:
+              </label>
+              <textarea
+                rows={2}
                 value={discussionText}
                 onChange={(e) => setDiscussionText(e.target.value)}
-                placeholder="Type or speak your statement to the round table..."
+                placeholder="Type or use Push-to-Talk to compose your statement..."
                 autoFocus
-                className="w-full rounded-xl border border-medieval-border bg-medieval-surface px-4 py-3 font-body text-xs text-medieval-parchment placeholder-medieval-silver/40 focus:border-medieval-gold focus:outline-none"
+                className="w-full rounded-xl border border-medieval-border bg-medieval-surface px-4 py-2.5 font-body text-xs text-medieval-parchment placeholder-medieval-silver/40 focus:border-medieval-gold focus:outline-none resize-none"
               />
             </div>
 
-            {/* Quick Suggestion Options */}
+            {/* Quick Suggestion Options (CLICK ONLY FILLS, DOES NOT AUTO-SUBMIT) */}
             <div className="w-full">
               <span className="font-display text-[10px] tracking-wider text-medieval-silver/60 uppercase block mb-1.5 text-left">
-                Suggested Statements (Click to Select or Speak):
+                Suggested Statements (Click to fill text box):
               </span>
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 text-left">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-1.5 text-left">
                 {[
                   "I am a loyal servant of Arthur and want what is best for the realm.",
                   "I trust this team proposal and believe we should approve it.",
@@ -390,37 +458,30 @@ export default function HumanActionModal({ prompt, onRespond }: HumanActionModal
                 ].map((phrase) => {
                   const isSelected = discussionText === phrase;
                   return (
-                    <div
+                    <button
                       key={phrase}
-                      className={`flex items-center justify-between gap-1.5 rounded-xl border p-2.5 transition-all text-xs ${
+                      type="button"
+                      onClick={() => setDiscussionText(phrase)}
+                      className={`rounded-xl border p-2.5 text-left font-body text-[11px] leading-snug transition-all cursor-pointer ${
                         isSelected
-                          ? "border-medieval-gold bg-medieval-gold/15 text-medieval-gold"
+                          ? "border-medieval-gold bg-medieval-gold/20 text-medieval-gold ring-1 ring-medieval-gold"
                           : "border-medieval-border/70 bg-medieval-surface/60 text-medieval-silver/90 hover:border-medieval-gold/40 hover:bg-medieval-surface"
                       }`}
                     >
-                      <button
-                        type="button"
-                        onClick={() => setDiscussionText(phrase)}
-                        className="flex-1 text-left font-body text-[11px] leading-snug cursor-pointer"
-                      >
-                        "{phrase}"
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => handleDiscussionSubmit(undefined, phrase)}
-                        title="Speak this statement directly to the table"
-                        className="shrink-0 rounded-lg border border-medieval-gold/40 bg-medieval-gold/20 px-2 py-1 font-display text-[10px] font-bold text-medieval-gold hover:bg-medieval-gold hover:text-black transition-colors"
-                      >
-                        Speak ↵
-                      </button>
-                    </div>
+                      "{phrase}"
+                      {isSelected && (
+                        <span className="block mt-1 font-display text-[10px] text-medieval-gold font-bold">
+                          ✓ Selected
+                        </span>
+                      )}
+                    </button>
                   );
                 })}
               </div>
             </div>
 
             {/* TTS Voice Toggle */}
-            <div className="flex items-center justify-between w-full pt-0.5 px-1 text-xs">
+            <div className="flex items-center justify-between w-full px-1 text-xs">
               <label className="flex items-center gap-2 cursor-pointer font-body text-medieval-silver/80 hover:text-medieval-parchment">
                 <input
                   type="checkbox"
@@ -432,13 +493,23 @@ export default function HumanActionModal({ prompt, onRespond }: HumanActionModal
               </label>
             </div>
 
-            {/* Submit Button */}
-            <button
-              type="submit"
-              className="w-full rounded-2xl bg-medieval-gold py-3 font-display text-xs font-bold tracking-wider text-black hover:bg-[#e8c95a] active:scale-95 transition-all shadow-lg shadow-medieval-gold/20"
-            >
-              🔊 Speak to Round Table
-            </button>
+            {/* EXPLICIT SUBMIT BUTTON BEFORE PROCEEDING */}
+            <div className="w-full pt-1 flex flex-col gap-1.5">
+              <button
+                type="submit"
+                disabled={!discussionText.trim() && !isRecording}
+                className={`w-full rounded-2xl py-3.5 font-display text-xs font-bold tracking-wider transition-all duration-200 shadow-lg ${
+                  discussionText.trim()
+                    ? "bg-medieval-gold text-black hover:bg-[#e8c95a] active:scale-98 shadow-medieval-gold/25 cursor-pointer"
+                    : "bg-medieval-gold/30 text-black/40 cursor-not-allowed border border-medieval-gold/20"
+                }`}
+              >
+                🚀 SUBMIT STATEMENT & PROCEED
+              </button>
+              <p className="font-body text-[10px] text-medieval-silver/60 text-center">
+                Review your statement above. Clicking submit confirms your words and moves to the next player.
+              </p>
+            </div>
           </form>
         )}
 
