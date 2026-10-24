@@ -57,11 +57,11 @@ Boson's `higgs-tts-3` does **not** recognize generic names like `male_1` or `fem
 ### B. Inline Higgs Control Token Taxonomy
 Boson Higgs TTS 3 supports four categories of control tokens formatted inline within the input text string:
 - **Emotion Tokens:** `<|emotion:anger|>`, `<|emotion:determination|>`, `<|emotion:enthusiasm|>`, `<|emotion:fear|>`, `<|emotion:amusement|>`, `<|emotion:contemplation|>`, `<|emotion:elation|>`, `<|emotion:pride|>`, `<|emotion:relief|>`, `<|emotion:confusion|>`, `<|emotion:surprise|>`, `<|emotion:disgust|>`, `<|emotion:bitterness|>`
-- **Style Delivery Tokens:** `<|style:whispering|>`, `<|style:shouting|>`
-- **Prosody Tokens:** `<|prosody:expressiveness_high|>`, `<|prosody:speed_fast|>`, `<|prosody:speed_slow|>`, `<|prosody:speed_very_fast|>`, `<|prosody:pause|>`
-- **SFX Acoustic Tokens:** `<|sfx:laughter|>`, `<|sfx:sigh|>`
+- **Style Delivery Tokens:** `<|style:whispering|>`, `<|style:shouting|>`, `<|style:singing|>`
+- **Prosody Tokens:** `<|prosody:expressive_high|>`, `<|prosody:expressive_low|>`, `<|prosody:speed_fast|>`, `<|prosody:speed_slow|>`, `<|prosody:speed_very_fast|>`, `<|prosody:pause|>`, `<|prosody:long_pause|>`, `<|prosody:pitch_low|>`, `<|prosody:pitch_high|>`
+- **SFX Acoustic Tokens:** `<|sfx:laughter|>Haha! `, `<|sfx:sigh|>Uh, ` *(Note: SFX tokens must be paired with immediate onomatopoeia cues for Higgs acoustic activation)*
 
-> **Key Finding:** Arbitrary tag values (e.g. `<|emotion:suspicious|>`, `<|speed:0.92|>`) are silently ignored by Higgs TTS and yield flat neutral speech. Using verified tokens (e.g. `<|emotion:anger|>`, `<|style:shouting|>`, `<|prosody:expressiveness_high|>`) unlocks intense, dramatic vocal performance.
+> **Key Finding:** Tag values outside the official taxonomy (e.g. `<|emotion:suspicious|>`, `<|speed:0.92|>`, or misnamed `<|prosody:expressiveness_high|>`) are silently ignored by Higgs TTS and yield flat neutral speech. Using verified tokens (e.g. `<|emotion:anger|>`, `<|style:shouting|>`, `<|prosody:expressive_high|>`) unlocks intense, dramatic vocal performance.
 
 ---
 
@@ -71,15 +71,15 @@ Rather than forcing LLM prompts to output bracketed tags, the **GameStateEmotion
 
 | Game Situation | Player Role | Triggered Tokens | Vocal Effect |
 | :--- | :--- | :--- | :--- |
-| **Hammer Round (Round 4 / 5th Proposal)** | Loyal Servant | `<|style:shouting\|><\|emotion:fear\|><\|prosody:speed_very_fast\|><\|prosody:expressiveness_high\|>` | Desperate, high-stakes shouting to stop Evil from auto-winning |
-| **Hammer Round (Round 4 / 5th Proposal)** | Merlin | `<|style:whispering\|><\|emotion:fear\|><\|prosody:speed_fast\|><\|prosody:expressiveness_high\|><\|sfx:sigh\|>` | Tense, hurried whisper with audible sigh |
-| **Hammer Round (Round 4 / 5th Proposal)** | Minion / Assassin | `<|emotion:amusement\|><\|prosody:speed_slow\|><\|prosody:expressiveness_high\|>` | Chilling confidence; amused smugness |
-| **Quest Failed (1 Fail Card)** | Loyal Servant | `<|emotion:anger\|><\|prosody:speed_fast\|><\|prosody:expressiveness_high\|>` | Indignation and direct verbal confrontation |
-| **Quest Failed (2+ Fail Cards)** | Loyal Servant | `<|style:shouting\|><\|emotion:anger\|><\|prosody:speed_fast\|><\|prosody:expressiveness_high\|>` | Outrage; shouting betrayal at the mission team |
-| **Quest Failed** | Merlin | `<|style:whispering\|><\|emotion:contemplation\|><\|prosody:speed_slow\|><\|prosody:expressiveness_high\|><\|sfx:sigh\|>` | Cryptic, restrained disappointment to conceal identity |
-| **Quest Succeeded** | Loyal Servant | `<|emotion:elation\|><\|prosody:expressiveness_high\|>` | Celebratory relief and renewed confidence |
-| **Rejection Streak (Round 2–3)** | Loyal Servant | `<|emotion:bitterness\|><\|prosody:speed_fast\|><\|prosody:expressiveness_high\|>` | Growing frustration and heightened paranoia |
-| **Assassination Phase** | Assassin | `<|emotion:pride\|><\|prosody:speed_slow\|><\|prosody:expressiveness_high\|>` | Triumphant, calculating endgame execution |
+| **Hammer Round (Round 4 / 5th Proposal)** | Loyal Servant | `<|style:shouting\|><\|emotion:fear\|><\|prosody:speed_very_fast\|><\|prosody:expressive_high\|>` | Desperate, high-stakes shouting to stop Evil from auto-winning |
+| **Hammer Round (Round 4 / 5th Proposal)** | Merlin | `<|style:whispering\|><\|emotion:fear\|><\|prosody:speed_fast\|><\|prosody:expressive_high\|><\|sfx:sigh\|>Uh, ` | Tense, hurried whisper with audible sigh |
+| **Hammer Round (Round 4 / 5th Proposal)** | Minion / Assassin | `<|emotion:amusement\|><\|prosody:speed_slow\|><\|prosody:expressive_high\|>` | Chilling confidence; amused smugness |
+| **Quest Failed (1 Fail Card)** | Loyal Servant | `<|emotion:anger\|><\|prosody:speed_fast\|><\|prosody:expressive_high\|>` | Indignation and direct verbal confrontation |
+| **Quest Failed (2+ Fail Cards)** | Loyal Servant | `<|style:shouting\|><\|emotion:anger\|><\|prosody:speed_fast\|><\|prosody:expressive_high\|>` | Outrage; shouting betrayal at the mission team |
+| **Quest Failed** | Merlin | `<|style:whispering\|><\|emotion:contemplation\|><\|prosody:speed_slow\|><\|prosody:expressive_high\|><\|sfx:sigh\|>Uh, ` | Cryptic, restrained disappointment to conceal identity |
+| **Quest Succeeded** | Loyal Servant | `<|emotion:elation\|><\|prosody:expressive_high\|>` | Celebratory relief and renewed confidence |
+| **Rejection Streak (Round 2–3)** | Loyal Servant | `<|emotion:bitterness\|><\|prosody:speed_fast\|><\|prosody:expressive_high\|>` | Growing frustration and heightened paranoia |
+| **Assassination Phase** | Assassin | `<|emotion:pride\|><\|prosody:speed_slow\|><\|prosody:expressive_high\|>` | Triumphant, calculating endgame execution |
 
 ---
 

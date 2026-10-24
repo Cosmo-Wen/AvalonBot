@@ -145,6 +145,7 @@ class AvalonGameRunner:
                             style=delivery.style,
                             emotion=delivery.emotion,
                             prosody=delivery.prosody,
+                            sfx=delivery.sfx,
                         )
 
                 # If pipelined, let utterances play out before leader finalizes action

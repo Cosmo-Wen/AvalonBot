@@ -47,22 +47,20 @@ async def transcribe_audio_file(
         return ""
 
     url = "https://api.boson.ai/v1/audio/transcriptions"
-    boundary = "----AvalonHumanVoiceBoundary98765"
+    headers = {"Authorization": f"Bearer {api_key}"}
 
-    body = bytearray()
-    body.extend(f"--{boundary}\r\nContent-Disposition: form-data; name=\"model\"\r\n\r\n{model}\r\n".encode("utf-8"))
-    body.extend(f"--{boundary}\r\nContent-Disposition: form-data; name=\"file\"; filename=\"speech.wav\"\r\nContent-Type: audio/wav\r\n\r\n".encode("utf-8"))
-    body.extend(wav_bytes)
-    body.extend(f"\r\n--{boundary}--\r\n".encode("utf-8"))
-
-    headers = {
-        "Authorization": f"Bearer {api_key}",
-        "Content-Type": f"multipart/form-data; boundary={boundary}",
-    }
+    form_data = aiohttp.FormData()
+    form_data.add_field("model", model)
+    form_data.add_field(
+        "file",
+        wav_bytes,
+        filename="speech.wav",
+        content_type="audio/wav",
+    )
 
     try:
         async with aiohttp.ClientSession() as session:
-            async with session.post(url, data=bytes(body), headers=headers) as resp:
+            async with session.post(url, data=form_data, headers=headers) as resp:
                 if resp.status == 200:
                     data = await resp.json()
                     transcript = data.get("text", "").strip()

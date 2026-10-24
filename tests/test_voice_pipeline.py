@@ -124,14 +124,14 @@ def test_delivery_prefix_formatting():
     delivery = GameStateDelivery(
         emotion="anger",
         style="shouting",
-        prosody=["speed_fast", "expressiveness_high"],
+        prosody=["speed_fast", "expressive_high"],
         sfx="sigh",
     )
     tags = delivery.to_prefix_tags()
     assert "<|style:shouting|>" in tags
     assert "<|emotion:anger|>" in tags
     assert "<|prosody:speed_fast|>" in tags
-    assert "<|prosody:expressiveness_high|>" in tags
+    assert "<|prosody:expressive_high|>" in tags
     assert "<|sfx:sigh|>" in tags
 
     formatted = delivery.format_utterance("I don't trust Player 0!")
@@ -141,6 +141,14 @@ def test_delivery_prefix_formatting():
     # Existing tags are not duplicated
     pre_tagged = "<|emotion:anger|>Already tagged"
     assert delivery.format_utterance(pre_tagged) == pre_tagged
+
+    # Legacy tag auto-sanitization test
+    legacy_delivery = GameStateDelivery(
+        emotion="anger",
+        prosody=["expressiveness_high"],
+    )
+    legacy_tags = legacy_delivery.to_prefix_tags()
+    assert "<|prosody:expressive_high|>" in legacy_tags
 
 
 def test_audio_pipeline_offline_fallback():

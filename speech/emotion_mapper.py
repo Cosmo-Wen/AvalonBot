@@ -6,7 +6,7 @@ and player roles into expressive Boson Higgs control tokens:
 - Emotions: anger, determination, enthusiasm, fear, amusement, contemplation,
             elation, pride, relief, confusion, surprise, disgust, bitterness
 - Styles: whispering, shouting
-- Prosody: expressiveness_high, speed_fast, speed_slow, speed_very_fast, pause
+- Prosody: expressive_high, speed_fast, speed_slow, speed_very_fast, pause
 - SFX: laughter, sigh
 """
 
@@ -26,7 +26,7 @@ class GameStateDelivery:
     ):
         self.emotion = emotion
         self.style = style
-        self.prosody = prosody or ["expressiveness_high"]
+        self.prosody = prosody or ["expressive_high"]
         self.sfx = sfx
 
     def to_prefix_tags(self) -> str:
@@ -38,9 +38,16 @@ class GameStateDelivery:
             tags.append(f"<|emotion:{self.emotion}|>")
         if self.prosody:
             for p in self.prosody:
-                tags.append(f"<|prosody:{p}|>")
+                token = "expressive_high" if p == "expressiveness_high" else p
+                tags.append(f"<|prosody:{token}|>")
         if self.sfx:
-            tags.append(f"<|sfx:{self.sfx}|>")
+            # Pair with onomatopoeia cue for Higgs acoustic model
+            if self.sfx == "sigh":
+                tags.append(f"<|sfx:{self.sfx}|>Uh, ")
+            elif self.sfx == "laughter":
+                tags.append(f"<|sfx:{self.sfx}|>Haha! ")
+            else:
+                tags.append(f"<|sfx:{self.sfx}|>")
         return "".join(tags)
 
     def format_utterance(self, text: str) -> str:
@@ -82,7 +89,7 @@ class GameStateEmotionMapper:
                 return GameStateDelivery(
                     emotion="fear",
                     style="whispering",
-                    prosody=["speed_fast", "expressiveness_high"],
+                    prosody=["speed_fast", "expressive_high"],
                     sfx="sigh",
                 )
             elif role in (Role.MINION, Role.ASSASSIN):
@@ -90,14 +97,14 @@ class GameStateEmotionMapper:
                 return GameStateDelivery(
                     emotion="amusement",
                     style=None,
-                    prosody=["speed_slow", "expressiveness_high"],
+                    prosody=["speed_slow", "expressive_high"],
                 )
             else:
                 # Loyal Servants are desperate and shouting
                 return GameStateDelivery(
                     emotion="fear",
                     style="shouting",
-                    prosody=["speed_very_fast", "expressiveness_high"],
+                    prosody=["speed_very_fast", "expressive_high"],
                 )
 
         # 2. IMMEDIATE REACTION TO FAILED QUEST
@@ -108,15 +115,15 @@ class GameStateEmotionMapper:
                 return GameStateDelivery(
                     emotion="contemplation",
                     style="whispering",
-                    prosody=["speed_slow", "expressiveness_high"],
+                    prosody=["speed_slow", "expressive_high"],
                     sfx="sigh",
                 )
             elif role in (Role.MINION, Role.ASSASSIN):
-                # Evil feigns innocence or deflects with indignation
+                # Evil feigns innocence or deflects with indignation/anger
                 return GameStateDelivery(
-                    emotion="indignation" if "indignation" in ["indignation"] else "anger",
+                    emotion="anger",
                     style=None,
-                    prosody=["speed_fast", "expressiveness_high"],
+                    prosody=["speed_fast", "expressive_high"],
                 )
             else:
                 # Loyal servants are furious (more anger as requested!)
@@ -124,13 +131,13 @@ class GameStateEmotionMapper:
                     return GameStateDelivery(
                         emotion="anger",
                         style="shouting",
-                        prosody=["speed_fast", "expressiveness_high"],
+                        prosody=["speed_fast", "expressive_high"],
                     )
                 else:
                     return GameStateDelivery(
                         emotion="anger",
                         style=None,
-                        prosody=["speed_fast", "expressiveness_high"],
+                        prosody=["speed_fast", "expressive_high"],
                     )
 
         # 3. IMMEDIATE REACTION TO SUCCESSFUL QUEST
@@ -139,21 +146,21 @@ class GameStateEmotionMapper:
                 return GameStateDelivery(
                     emotion="relief",
                     style="whispering",
-                    prosody=["expressiveness_high"],
+                    prosody=["expressive_high"],
                 )
             elif role in (Role.MINION, Role.ASSASSIN):
                 # Evil is cautious or bitter inside
                 return GameStateDelivery(
                     emotion="determination",
                     style=None,
-                    prosody=["expressiveness_high"],
+                    prosody=["expressive_high"],
                 )
             else:
                 # Good is elated
                 return GameStateDelivery(
                     emotion="elation" if passes_count >= 2 else "enthusiasm",
                     style=None,
-                    prosody=["expressiveness_high"],
+                    prosody=["expressive_high"],
                 )
 
         # 4. HIGH REJECTION STREAK (Round 2 or 3)
@@ -162,13 +169,13 @@ class GameStateEmotionMapper:
                 return GameStateDelivery(
                     emotion="anger" if round_num == 3 else "bitterness",
                     style=None,
-                    prosody=["speed_fast", "expressiveness_high"],
+                    prosody=["speed_fast", "expressive_high"],
                 )
             elif role == Role.MERLIN:
                 return GameStateDelivery(
                     emotion="contemplation",
                     style="whispering",
-                    prosody=["expressiveness_high"],
+                    prosody=["expressive_high"],
                 )
 
         # 5. ACCUSATION / DIRECT CHALLENGE
@@ -176,7 +183,7 @@ class GameStateEmotionMapper:
             return GameStateDelivery(
                 emotion="anger",
                 style=None,
-                prosody=["speed_fast", "expressiveness_high"],
+                prosody=["speed_fast", "expressive_high"],
             )
 
         # 6. BASE ROLE ARCHETYPES (When game is in normal steady state)
@@ -184,31 +191,31 @@ class GameStateEmotionMapper:
             return GameStateDelivery(
                 emotion="contemplation",
                 style="whispering",
-                prosody=["expressiveness_high"],
+                prosody=["expressive_high"],
             )
         elif role == Role.ASSASSIN:
             return GameStateDelivery(
                 emotion="amusement",
                 style=None,
-                prosody=["speed_slow", "expressiveness_high"],
+                prosody=["speed_slow", "expressive_high"],
             )
         elif role == Role.MINION:
             return GameStateDelivery(
                 emotion="determination",
                 style=None,
-                prosody=["expressiveness_high"],
+                prosody=["expressive_high"],
             )
         elif seat == 2:  # Loyal Servant 2 - hot-tempered
             return GameStateDelivery(
                 emotion="anger",
                 style=None,
-                prosody=["speed_fast", "expressiveness_high"],
+                prosody=["speed_fast", "expressive_high"],
             )
         else:  # Loyal Servant 1 - earnest defender
             return GameStateDelivery(
                 emotion="enthusiasm",
                 style=None,
-                prosody=["expressiveness_high"],
+                prosody=["expressive_high"],
             )
 
     @staticmethod
@@ -217,5 +224,5 @@ class GameStateEmotionMapper:
         return GameStateDelivery(
             emotion="pride",
             style=None,
-            prosody=["speed_slow", "expressiveness_high"],
+            prosody=["speed_slow", "expressive_high"],
         )
