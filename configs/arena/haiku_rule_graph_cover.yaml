@@ -14,7 +14,7 @@ roles: [Merlin, Servant, Servant, Assassin, Minion]
 condition: rule_graph
 merlin_strategy: cover  # Merlin votes and picks teams from public evidence; real knowledge only at match point
 
-num_games: 12         # seeds 0-11, paired with haiku_rule_graph.yaml
+num_games: 10         # seeds 0-9, paired with haiku_rule_graph.yaml (run with --num-games 10)
 base_seed: 0
 shuffle_roles: true
 shuffle_seats: false  # every seat plays the same model
