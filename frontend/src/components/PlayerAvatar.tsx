@@ -22,7 +22,10 @@ const ROLE_ICON: Record<string, string> = {
   loyal_servant: "/roles/good-icon.webp",
 };
 
-function AvatarVideo({ video, audio, muted }: { video: RemoteTrack; audio?: RemoteTrack | null; muted: boolean }) {
+/** Phoenix repeats James and Solara repeats Claire, so those two faces are mirrored. */
+const MIRRORED_SEATS = new Set([3, 4]);
+
+function AvatarVideo({ video, audio, muted, mirror }: { video: RemoteTrack; audio?: RemoteTrack | null; muted: boolean; mirror: boolean }) {
   const ref = useRef<HTMLVideoElement>(null);
   useEffect(() => {
     const el = ref.current;
@@ -37,7 +40,14 @@ function AvatarVideo({ video, audio, muted }: { video: RemoteTrack; audio?: Remo
       audio?.detach(el);
     };
   }, [video, audio, muted]);
-  return <video ref={ref} autoPlay playsInline className="absolute inset-0 h-full w-full object-cover object-top" />;
+  return (
+    <video
+      ref={ref}
+      autoPlay
+      playsInline
+      className={`absolute inset-0 h-full w-full object-cover object-top ${mirror ? "-scale-x-100" : ""}`}
+    />
+  );
 }
 
 function Emblem({ seat }: { seat: number }) {
@@ -82,7 +92,11 @@ export default function PlayerAvatar({ player, isLeader, isOnTeam, vote, showRol
         }}
       >
         <div className="relative h-full w-full overflow-hidden rounded-[0.8rem] bg-medieval-surface">
-          {videoTrack ? <AvatarVideo video={videoTrack} audio={audioTrack} muted={muted} /> : <Emblem seat={player.seat} />}
+          {videoTrack ? (
+            <AvatarVideo video={videoTrack} audio={audioTrack} muted={muted} mirror={MIRRORED_SEATS.has(player.seat)} />
+          ) : (
+            <Emblem seat={player.seat} />
+          )}
           <div className="pointer-events-none absolute inset-x-0 bottom-0 h-1/3 bg-gradient-to-t from-black/70 to-transparent" />
           {speaking && (
             <div className="absolute bottom-1.5 left-1/2 flex -translate-x-1/2 items-end gap-[2px]">
