@@ -4,12 +4,16 @@ Tool Definitions and Dispatcher for Avalon LLM Agents.
 Implements the official tool-calling schema (compatible with both
 Boson ChatCompletions and Boson Higgs Realtime API).
 
-Tools represent the official game actions:
-- propose_team(team: List[int])
-- vote_on_team(approve: bool, reason: str)
-- vote_on_quest(pass_quest: bool)
-- assassinate(target: int)
-- update_belief_graph(player_id: int, p_evil: float, reason: str)
+Game actions:
+- propose_team(team, reasoning)
+- vote_on_team(approve, reason)
+- vote_on_quest(pass_quest)
+- assassinate(target, reason)
+
+Memory (see MEMORY_MODEL.md):
+- record_observations(edges, p_evil, notes): a player's own extraction call
+- report_beliefs(p_evil): final P(evil) in condition A
+- recall / quote / evidence / my_record: exact lookup over the caller's own memory
 """
 
 from typing import Dict, List, Any, Optional
@@ -99,32 +103,139 @@ AVALON_TOOL_DEFINITIONS = [
             },
         },
     },
+]
+
+_P_EVIL_SCHEMA = {
+    "type": "object",
+    "description": (
+        "Probability each other player is evil, keyed by player id. Exactly 2 of your 4 opponents are evil, "
+        "so the values must sum to 2. Each failed team's members must sum to at least its number of fails."
+    ),
+    "additionalProperties": {"type": "number"},
+}
+
+MEMORY_TOOL_DEFINITIONS = [
     {
         "type": "function",
         "function": {
-            "name": "update_belief",
-            "description": "Update your structured belief graph regarding suspicion of other players.",
+            "name": "record_observations",
+            "description": "Record what you heard in this discussion round into your private memory.",
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "player": {
-                        "type": "integer",
-                        "description": "The player ID being evaluated.",
+                    "edges": {
+                        "type": "array",
+                        "description": "Talk evidence from this round. Each edge must cite the seq numbers of the speaker's own lines.",
+                        "items": {
+                            "type": "object",
+                            "properties": {
+                                "type": {
+                                    "type": "string",
+                                    "enum": ["accused", "defended", "backed_team", "opposed_team", "claimed_role"],
+                                },
+                                "from": {"type": "integer", "description": "The speaker."},
+                                "to": {
+                                    "description": "A player id for accused/defended, or a team label like Q2.1 for backed_team/opposed_team.",
+                                },
+                                "role": {"type": "string", "description": "For claimed_role: the role claimed."},
+                                "sources": {"type": "array", "items": {"type": "integer"}, "description": "Log seq numbers of the speaker's lines."},
+                                "quote": {"type": "string", "description": "At most 10 words from the source line."},
+                            },
+                            "required": ["type", "from", "sources"],
+                        },
                     },
-                    "p_evil": {
-                        "type": "number",
-                        "description": "Probability that this player is Evil (between 0.0 and 1.0).",
-                    },
-                    "evidence": {
-                        "type": "string",
-                        "description": "Key observations or voting patterns justifying this belief.",
+                    "p_evil": _P_EVIL_SCHEMA,
+                    "notes": {
+                        "type": "object",
+                        "description": "At most 15 words per player, keyed by player id.",
+                        "additionalProperties": {"type": "string"},
                     },
                 },
-                "required": ["player", "p_evil"],
+                "required": ["edges", "notes"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "report_beliefs",
+            "description": "Report how likely each other player is to be evil.",
+            "parameters": {
+                "type": "object",
+                "properties": {"p_evil": _P_EVIL_SCHEMA},
+                "required": ["p_evil"],
             },
         },
     },
 ]
+
+RECALL_TOOL_DEFINITIONS = [
+    {
+        "type": "function",
+        "function": {
+            "name": "recall",
+            "description": "Look up entries in your own observation log. All filters are optional.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "player": {"type": "integer", "description": "Only entries involving this player."},
+                    "from_seq": {"type": "integer"},
+                    "to_seq": {"type": "integer"},
+                    "kinds": {
+                        "type": "array",
+                        "items": {"type": "string", "enum": ["utterance", "proposal", "team_vote", "quest_result", "evil_chat"]},
+                    },
+                },
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "quote",
+            "description": "Get the full text of one entry in your log.",
+            "parameters": {
+                "type": "object",
+                "properties": {"seq": {"type": "integer"}},
+                "required": ["seq"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "evidence",
+            "description": "All evidence in your memory about one player, with the entries it came from.",
+            "parameters": {
+                "type": "object",
+                "properties": {"player": {"type": "integer"}},
+                "required": ["player"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "my_record",
+            "description": "What you said, why you voted and proposed as you did, and your quest cards.",
+            "parameters": {
+                "type": "object",
+                "properties": {"quest": {"type": "integer", "description": "Optional quest number, counted from 1."}},
+            },
+        },
+    },
+]
+
+RECALL_TOOL_NAMES = {t["function"]["name"] for t in RECALL_TOOL_DEFINITIONS}
+
+ALL_TOOL_DEFINITIONS = AVALON_TOOL_DEFINITIONS + MEMORY_TOOL_DEFINITIONS + RECALL_TOOL_DEFINITIONS
+
+
+def get_tool(name: str) -> Dict[str, Any]:
+    for tool in ALL_TOOL_DEFINITIONS:
+        if tool["function"]["name"] == name:
+            return tool
+    raise KeyError(f"Unknown tool {name}")
 
 
 def format_tools_for_realtime() -> List[Dict[str, Any]]:

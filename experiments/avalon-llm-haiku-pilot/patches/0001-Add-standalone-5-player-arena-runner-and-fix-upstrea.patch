@@ -1,0 +1,2950 @@
+From b775e499b8214e3256754e22634b8acc6d1fed2a Mon Sep 17 00:00:00 2001
+From: Cosmo <forhchs@gmail.com>
+Date: Fri, 23 Oct 2026 20:41:44 -0400
+Subject: [PATCH 1/2] Add standalone 5-player arena runner and fix upstream
+ game bugs
+
+src/arena: seeded role/seat shuffles, per-game JSONL event logs, async
+runner with retry and per-game resume, sharding, and three model
+backends: claude_cli (Claude Code headless on the user's own login),
+anthropic (Claude API key), and an offline fake model. The search
+agent's planner routes through the same backends.
+
+Fixes to existing code:
+- engine.from_presets stored game state on the class, so concurrent
+  games shared roles
+- the search planner's actor enumerator ignored default_player_order,
+  so it reasoned as the lowest-numbered acting player; discussion used
+  the quest leader's private information
+- MultiAgentProxy labelled seat i as "Player i+1" in broadcast
+  discussion, misattributing every line
+- search agent RNG was hard-coded to seed 12
+- langchain/tiktoken imports made lazy so the arena runs without them
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01U1d3PHHyK6qXqb43QY1Yf6
+---
+ configs/arena/avalon5.yaml                    |  35 ++
+ configs/arena/haiku_short.yaml                |  33 ++
+ multi_agent/mods/__init__.py                  |   9 +-
+ multi_agent/proxy.py                          |   3 +-
+ requirements-arena.txt                        |  11 +
+ src/arena/README.md                           | 113 +++++
+ src/arena/__init__.py                         |   1 +
+ src/arena/__main__.py                         | 166 ++++++++
+ src/arena/backends.py                         | 402 ++++++++++++++++++
+ src/arena/config.py                           |  98 +++++
+ src/arena/events.py                           |  83 ++++
+ src/arena/game.py                             | 249 +++++++++++
+ src/arena/retry.py                            |  49 +++
+ src/arena/runner.py                           | 227 ++++++++++
+ src/arena/seeding.py                          |  66 +++
+ src/arena/session.py                          |  74 ++++
+ .../tasks/avalon/agents/search_agent.py       |  51 ++-
+ src/server/tasks/avalon/engine.py             |  41 +-
+ strategist/Avalon/baseline_models_Avalon.py   |   6 +-
+ .../llm_utils/llm_api_models.py               |  12 +-
+ tests/__init__.py                             |   0
+ tests/arena/__init__.py                       |   0
+ tests/arena/conftest.py                       |  22 +
+ tests/arena/test_api_backend.py               | 158 +++++++
+ tests/arena/test_cli_backend.py               | 163 +++++++
+ tests/arena/test_engine_presets.py            |  23 +
+ tests/arena/test_events.py                    |  36 ++
+ tests/arena/test_game_fake.py                 |  54 +++
+ tests/arena/test_runner.py                    | 224 ++++++++++
+ tests/arena/test_search_pov.py                |  58 +++
+ tests/arena/test_seeding.py                   |  73 ++++
+ 31 files changed, 2495 insertions(+), 45 deletions(-)
+ create mode 100644 configs/arena/avalon5.yaml
+ create mode 100644 configs/arena/haiku_short.yaml
+ create mode 100644 requirements-arena.txt
+ create mode 100644 src/arena/README.md
+ create mode 100644 src/arena/__init__.py
+ create mode 100644 src/arena/__main__.py
+ create mode 100644 src/arena/backends.py
+ create mode 100644 src/arena/config.py
+ create mode 100644 src/arena/events.py
+ create mode 100644 src/arena/game.py
+ create mode 100644 src/arena/retry.py
+ create mode 100644 src/arena/runner.py
+ create mode 100644 src/arena/seeding.py
+ create mode 100644 src/arena/session.py
+ create mode 100644 tests/__init__.py
+ create mode 100644 tests/arena/__init__.py
+ create mode 100644 tests/arena/conftest.py
+ create mode 100644 tests/arena/test_api_backend.py
+ create mode 100644 tests/arena/test_cli_backend.py
+ create mode 100644 tests/arena/test_engine_presets.py
+ create mode 100644 tests/arena/test_events.py
+ create mode 100644 tests/arena/test_game_fake.py
+ create mode 100644 tests/arena/test_runner.py
+ create mode 100644 tests/arena/test_search_pov.py
+ create mode 100644 tests/arena/test_seeding.py
+
+diff --git a/configs/arena/avalon5.yaml b/configs/arena/avalon5.yaml
+new file mode 100644
+index 0000000..c262b69
+--- /dev/null
++++ b/configs/arena/avalon5.yaml
+@@ -0,0 +1,35 @@
++# 5-player Avalon arena. Every model call runs through Claude Code (`claude -p`) on your own login.
++#   python -m src.arena check --config configs/arena/avalon5.yaml
++#   python -m src.arena run   --config configs/arena/avalon5.yaml --run-dir results/arena/<run-id>
++# Add --fake to `run` to play offline with a scripted model (free; checks the install).
++# Re-running the same `run` command resumes: finished games are skipped, unfinished ones replayed with the same seed.
++
++num_players: 5
++seats:              # participants; with shuffle_seats they are permuted across seats per game
++  # model: Claude Code alias or full id. haiku stretches subscription usage furthest; sonnet/opus play better.
++  # planner_model (search/recon only) sets the model for the search agent's internal dialogue planner.
++  - {agent: search, provider: claude_cli, model: haiku}
++  - {agent: llm, provider: claude_cli, model: haiku}
++  - {agent: llm, provider: claude_cli, model: haiku}
++  - {agent: llm, provider: claude_cli, model: haiku}
++  - {agent: llm, provider: claude_cli, model: haiku}
++  # With a Claude API key (pip install 'anthropic>=2.0.0', export ANTHROPIC_API_KEY=...), a seat can use the API:
++  #   - {agent: llm, provider: anthropic, model: claude-opus-5-5, effort: medium}
++  # API model ids or the aliases haiku / sonnet / opus; `effort` is low|medium|high|xhigh|max (null to omit).
++roles: [Merlin, Servant, Servant, Assassin, Minion]
++
++num_games: 4
++base_seed: 0
++shuffle_roles: true
++shuffle_seats: true
++random_leader: true
++discussion: true
++
++concurrency: 1        # games played in parallel
++cli_max_parallel: 2   # concurrent `claude -p` processes across all games
++max_game_retries: 2   # replays of a game after an infrastructure failure
++llm_max_retries: 5    # retries per model call on timeouts / overload
++llm_timeout_s: 180
++backoff_base_s: 2
++backoff_max_s: 60
++# claude_bin: /path/to/claude   # only if `claude` is not on PATH
+diff --git a/configs/arena/haiku_short.yaml b/configs/arena/haiku_short.yaml
+new file mode 100644
+index 0000000..e5116f2
+--- /dev/null
++++ b/configs/arena/haiku_short.yaml
+@@ -0,0 +1,33 @@
++# Fast pilot config: all-Haiku seats with low effort and short replies (about 20 min per game).
++#   python -m src.arena run --config configs/arena/haiku_short.yaml --run-dir <dir>
++
++num_players: 5
++seats:              # participants; with shuffle_seats they are permuted across seats per game
++  # model: Claude Code alias or full id. haiku stretches subscription usage furthest; sonnet/opus play better.
++  # planner_model (search/recon only) sets the model for the search agent's internal dialogue planner.
++  - {agent: search, provider: claude_cli, model: haiku, effort: low}
++  - {agent: llm, provider: claude_cli, model: haiku, effort: low}
++  - {agent: llm, provider: claude_cli, model: haiku, effort: low}
++  - {agent: llm, provider: claude_cli, model: haiku, effort: low}
++  - {agent: llm, provider: claude_cli, model: haiku, effort: low}
++  # With a Claude API key (pip install 'anthropic>=2.0.0', export ANTHROPIC_API_KEY=...), a seat can use the API:
++  #   - {agent: llm, provider: anthropic, model: claude-opus-5-5, effort: medium}
++  # API model ids or the aliases haiku / sonnet / opus; `effort` is low|medium|high|xhigh|max (null to omit).
++roles: [Merlin, Servant, Servant, Assassin, Minion]
++
++num_games: 4
++base_seed: 0
++shuffle_roles: true
++shuffle_seats: true
++random_leader: true
++discussion: true
++reply_max_words: 40
++
++concurrency: 1        # games played in parallel
++cli_max_parallel: 2   # concurrent `claude -p` processes across all games
++max_game_retries: 2   # replays of a game after an infrastructure failure
++llm_max_retries: 5    # retries per model call on timeouts / overload
++llm_timeout_s: 180
++backoff_base_s: 2
++backoff_max_s: 60
++# claude_bin: /path/to/claude   # only if `claude` is not on PATH
+diff --git a/multi_agent/mods/__init__.py b/multi_agent/mods/__init__.py
+index af227e5..8f71a6f 100644
+--- a/multi_agent/mods/__init__.py
++++ b/multi_agent/mods/__init__.py
+@@ -1 +1,8 @@
+-from .langchain_mods import LangchainSession
+\ No newline at end of file
++try:
++    from .langchain_mods import LangchainSession
++except ImportError as _e:  # langchain is optional: only LangchainSession needs it
++    _langchain_import_error = _e
++
++    class LangchainSession:
++        def __init__(self, *args, **kwargs):
++            raise ImportError("LangchainSession requires langchain, langchain_openai and langchain_community") from _langchain_import_error
+diff --git a/multi_agent/proxy.py b/multi_agent/proxy.py
+index d243104..ead7362 100644
+--- a/multi_agent/proxy.py
++++ b/multi_agent/proxy.py
+@@ -84,7 +84,8 @@ class MultiAgentProxy(Proxy):
+     def get_agent_names(self):
+         self.agent_names = ['' for _ in range(self.num_agents)]
+         for i in range(self.num_agents):
+-            self.agent_names[i] = f"Player {i+1}"
++            # 0-based, like player ids everywhere else (engine, prompts, votes, teams)
++            self.agent_names[i] = f"Player {i}"
+ 
+     def reply_single_message(self, sender: int, reply_agent: int):
+         pass
+diff --git a/requirements-arena.txt b/requirements-arena.txt
+new file mode 100644
+index 0000000..9e4dc25
+--- /dev/null
++++ b/requirements-arena.txt
+@@ -0,0 +1,11 @@
++# Minimal dependencies for the standalone arena (src/arena). Python 3.10-3.12.
++# Model calls go through the Claude Code CLI (`claude`), installed and logged in separately.
++pydantic~=1.10.13
++numpy>=1.24,<2
++pyyaml~=6.0
++networkx>=2.8
++matplotlib>=3.5
++tqdm>=4.65
++pytest>=7
++# Optional, only for seats with `provider: anthropic` (Claude API key):
++# anthropic>=2.0.0
+diff --git a/src/arena/README.md b/src/arena/README.md
+new file mode 100644
+index 0000000..421ab7e
+--- /dev/null
++++ b/src/arena/README.md
+@@ -0,0 +1,113 @@
++# Avalon arena
++
++Standalone runner for 5-player Avalon games between LLM agents:
++- **Seeded setups:** role deal, seat assignment and starting leader all come from `(base_seed, game_idx)`.
++- **Event logs:** one JSONL log per game.
++- **Concurrent runs:** retries and per-game resume.
++
++Each seat picks a provider:
++- **`claude_cli`** (default): Claude Code in headless mode (`claude -p`) on each person's own Claude
++  login. No API key needed.
++- **`anthropic`**: the Claude API with an API key, for anyone who has one (see below).
++- **`fake`**: a built-in scripted model that plays offline for free, which lets you check an install end to end.
++
++Providers can be mixed in one game.
++
++## Setup (macOS, Linux, Windows)
++
++1. Install Claude Code, then run `claude` once and log in with your Claude account.
++2. Python 3.10–3.12:
++   ```bash
++   python -m venv .venv
++   source .venv/bin/activate          # Windows: .venv\Scripts\activate
++   pip install -r requirements-arena.txt
++   ```
++3. Check everything, then play offline games (free, a few seconds each):
++   ```bash
++   python -m src.arena check
++   python -m src.arena run --fake --num-games 2 --config configs/arena/avalon5.yaml --run-dir results/arena/fake
++   ```
++4. Check your login and each configured model (one tiny call per model), then play for real:
++   ```bash
++   python -m src.arena check --config configs/arena/avalon5.yaml
++   python -m src.arena run --config configs/arena/avalon5.yaml --run-dir results/arena/run1
++   python -m src.arena summarize --run-dir results/arena/run1
++   ```
++
++Run everything from the repository root.
++
++## Configuration
++
++See `configs/arena/avalon5.yaml`. Each seat has these fields:
++- `agent`: `llm`, `search` or `recon`.
++- `provider`: `claude_cli`, `anthropic` or `fake`.
++- `model`: a Claude Code model alias or id. `haiku` stretches your usage furthest; `sonnet` and `opus` play better.
++- Search/recon seats only:
++  - `planner_model`: the model for the search agent's dialogue planner.
++  - `planner_num_rollout` / `planner_node_budget`: its tree-search budget per decision. The default 100 is about 4 s of CPU per decision.
++
++With `shuffle_seats`, participants are permuted across seats each game.
++
++## Using a Claude API key (optional)
++
++1. `pip install 'anthropic>=2.0.0'`
++2. Set `ANTHROPIC_API_KEY`. An `ANTHROPIC_AUTH_TOKEN` or an `ant auth login` profile also works.
++3. Give seats `provider: anthropic`:
++   - `model`: an API model id (default `claude-opus-5-5`), or the aliases haiku / sonnet / opus.
++   - `effort`: default `medium`.
++4. Run `python -m src.arena check --config ...` to confirm the key and models.
++
++Requests follow the current API:
++- **No sampling parameters:** `temperature` and friends are rejected since API version 2026-10-21.
++- **Explicit effort level.**
++- **Automatic prompt caching:** each seat's transcript only grows, so later turns reuse earlier ones.
++- **Refusals:** `fallbacks: "default"` reruns a declined request on another model, on models that support
++  it (not Haiku). If the request is still declined, the game ends with status `refusal`.
++
++Error handling:
++- An exhausted credit balance (402) pauses the run like a usage limit.
++- A rejected key stops it with a hint.
++- Rate limits and overload are retried with backoff.
++
++`cost_usd` for API seats is an estimate from a built-in price table (`API_PRICES` in `backends.py`);
++check current pricing before relying on it.
++
++## Usage limits, resume and scaling
++
++- One game is about 150–250 model calls. A subscription's usage window allows only a limited number
++  of games, especially on larger models.
++- When the usage limit is hit, the run stops cleanly, writes `paused.json`, and exits with code 75.
++  **Re-run the same command after the limit resets** to continue.
++  - Finished games are skipped.
++  - Unfinished games are replayed from scratch with the same seed.
++  - The same applies after Ctrl-C or a crash.
++- `concurrency` runs games in parallel within one process. Search agents' tree search is CPU-bound and
++  takes turns process-wide, so for real parallelism split the run into processes with
++  `--shard i/n` (same `--run-dir` or merged later). `summarize` merges all shards.
++- `cli_max_parallel` caps concurrent `claude` processes.
++
++Each `claude -p` call runs with tools, MCP servers and settings disabled, in an empty temp directory,
++so no project files, hooks or plugins are involved.
++
++Headless Claude Code on your own machine and login is a documented feature, but check Anthropic's
++current consumer terms before relying on sustained automated runs.
++
++## Output
++
++`run-dir/manifest.json` holds the config, its hash and the git SHA. `run-dir/games/game_NNNNN.jsonl` holds
++one event per line:
++- `game_start` (seed, seats, roles)
++- `discussion`, `team_proposed`, `team_votes`, `team_result`, `quest_votes`, `quest_result`, `assassination`
++- `beliefs`
++- `llm_call` (prompt, response, model, tokens, latency)
++- `retry`, `error`
++- `game_end`
++
++`cost_usd` in logs: for `claude_cli`, Claude Code's list-price estimate (not billed on a subscription);
++for `anthropic`, an estimate of what the API call cost.
++
++## Tests
++
++```bash
++pytest tests/arena -q
++```
+diff --git a/src/arena/__init__.py b/src/arena/__init__.py
+new file mode 100644
+index 0000000..0d34080
+--- /dev/null
++++ b/src/arena/__init__.py
+@@ -0,0 +1 @@
++r"""Standalone 5-player Avalon arena: seeded role/seat shuffles, JSONL event logs, async runner."""
+diff --git a/src/arena/__main__.py b/src/arena/__main__.py
+new file mode 100644
+index 0000000..f66d540
+--- /dev/null
++++ b/src/arena/__main__.py
+@@ -0,0 +1,166 @@
++import argparse
++import asyncio
++import glob
++import json
++import os
++import sys
++from collections import Counter, defaultdict
++
++from .backends import FatalBackendError, UsageLimitReached, make_backend, resolve_claude_bin
++from .config import load_config
++from .events import read_events
++from .runner import run
++
++
++def _parse_shard(s: str):
++    i, n = s.split("/")
++    return int(i), int(n)
++
++
++def summarize(run_dir: str) -> dict:
++    r"""Aggregate final `game_end` events across all (sharded) game logs in a run dir."""
++    statuses = Counter()
++    winners = Counter()
++    by_name = defaultdict(lambda: {"games": 0, "wins": 0, "deduction_acc": 0.0})
++    by_agent_role = defaultdict(lambda: {"games": 0, "wins": 0})
++    usage = defaultdict(lambda: {"calls": 0, "input_tokens": 0, "output_tokens": 0, "cost_usd": 0.0})
++    for path in sorted(glob.glob(os.path.join(run_dir, "games", "game_*.jsonl"))):
++        if ".partial." in path:
++            continue
++        events = read_events(path)
++        if not events or events[-1]["type"] != "game_end":
++            statuses["unfinished"] += 1
++            continue
++        end = events[-1]["data"]
++        statuses[end["status"]] += 1
++        names = {s["seat"]: s["name"] for s in events[0]["data"].get("seats", [])} if events[0]["type"] == "game_start" else {}
++        for e in events:
++            if e["type"] == "llm_call":
++                u = usage[names.get(e["data"].get("seat"), "unknown")]
++                u["calls"] += 1
++                u["input_tokens"] += e["data"].get("input_tokens", 0)
++                u["output_tokens"] += e["data"].get("output_tokens", 0)
++                u["cost_usd"] += e["data"].get("cost_usd", 0.0)
++        if end["status"] != "completed":
++            continue
++        winners[f"{end['winner']}:{end['reason']}"] += 1
++        for seat in end["seats"]:
++            n = by_name[seat["name"]]
++            n["games"] += 1
++            n["wins"] += int(seat["won"])
++            n["deduction_acc"] += seat["deduction_acc"]
++            r = by_agent_role[f"{seat['agent']}:{seat['model']} as {seat['role']}"]
++            r["games"] += 1
++            r["wins"] += int(seat["won"])
++
++    def rate(d):
++        return {k: {**v, "win_rate": round(v["wins"] / v["games"], 3),
++                    **({"deduction_acc": round(v["deduction_acc"] / v["games"], 3)} if "deduction_acc" in v else {})}
++                for k, v in sorted(d.items())}
++
++    return {
++        "statuses": dict(statuses),
++        "outcomes": dict(winners),
++        "by_participant": rate(by_name),
++        "by_agent_and_role": rate(by_agent_role),
++        # cost_usd is what Claude Code reports at list prices; on a subscription it is not billed
++        "usage_by_participant": {k: {**v, "cost_usd": round(v["cost_usd"], 4)} for k, v in sorted(usage.items())},
++    }
++
++
++async def _check(cfg) -> bool:
++    ok = True
++    print(f"python {sys.version.split()[0]}: " + ("ok" if sys.version_info >= (3, 10) else "need >= 3.10"))
++    ok &= sys.version_info >= (3, 10)
++    try:
++        from . import game  # noqa: F401  (imports the full agent stack)
++        print("imports: ok")
++    except Exception as e:
++        print(f"imports: FAILED ({type(e).__name__}: {e})")
++        return False
++    if cfg is None:
++        return ok
++    if any(s.provider == "claude_cli" for s in cfg.seats):
++        try:
++            print(f"claude CLI: {resolve_claude_bin(cfg.claude_bin)}")
++        except FatalBackendError as e:
++            print(f"claude CLI: {e}")
++            return False
++    # one tiny call per distinct (provider, model) a seat or planner will use
++    targets = {}
++    for s in cfg.seats:
++        if s.provider != "fake":
++            for model in {s.model, s.planner_model or s.model}:
++                targets[(s.provider, model)] = s
++    for (provider, model), spec in sorted(targets.items()):
++        backend = None
++        try:
++            backend = make_backend(spec, cfg, seed=0, model=model)
++            c = await backend.complete("Answer tersely.", [("user", "Reply with exactly: OK")])
++            print(f"{provider} {model}: ok -> {c.model}, reply {c.text!r}, {c.input_tokens} in / {c.output_tokens} out tokens, {c.duration_s}s")
++        except Exception as e:
++            print(f"{provider} {model}: FAILED ({type(e).__name__}: {e})")
++            ok = False
++        finally:
++            if backend is not None:
++                backend.close()
++    return ok
++
++
++def main(argv=None):
++    parser = argparse.ArgumentParser(prog="python -m src.arena")
++    sub = parser.add_subparsers(dest="cmd", required=True)
++
++    p_run = sub.add_parser("run", help="play (or resume) a batch of games")
++    p_run.add_argument("--config", required=True)
++    p_run.add_argument("--run-dir", required=True)
++    p_run.add_argument("--shard", type=_parse_shard, default=(0, 1), help="i/n: run games with idx %% n == i")
++    p_run.add_argument("--concurrency", type=int, help="override config concurrency")
++    p_run.add_argument("--num-games", type=int, help="override config num_games")
++    p_run.add_argument("--force", action="store_true", help="resume even if the config hash changed")
++
++    p_run.add_argument("--fake", action="store_true", help="use the offline fake model for every seat (install check)")
++
++    p_sum = sub.add_parser("summarize", help="aggregate results of a run dir")
++    p_sum.add_argument("--run-dir", required=True)
++
++    p_chk = sub.add_parser("check", help="check the install, the Claude Code login and each configured model")
++    p_chk.add_argument("--config")
++
++    args = parser.parse_args(argv)
++    if args.cmd == "summarize":
++        print(json.dumps(summarize(args.run_dir), indent=2))
++        return 0
++    if args.cmd == "check":
++        ok = asyncio.run(_check(load_config(args.config) if args.config else None))
++        print("all checks passed" if ok else "some checks failed")
++        return 0 if ok else 1
++
++    cfg = load_config(args.config)
++    if args.fake:
++        for seat in cfg.seats:
++            seat.provider = "fake"
++    if args.concurrency is not None:
++        cfg.concurrency = args.concurrency
++    if args.num_games is not None:
++        cfg.num_games = args.num_games
++    try:
++        asyncio.run(run(cfg, args.run_dir, shard=args.shard, force=args.force))
++    except KeyboardInterrupt:
++        print("\nInterrupted. Re-run the same command to resume; unfinished games will be replayed.",
++              file=sys.stderr)
++        return 130
++    except UsageLimitReached as e:
++        print(f"\nUsage limit reached ({e}). Re-run the same command after it resets to resume.", file=sys.stderr)
++        return 75
++    except FatalBackendError as e:
++        print(f"error: {e}", file=sys.stderr)
++        return 2
++    except (RuntimeError, ValueError) as e:
++        print(f"error: {e}", file=sys.stderr)
++        return 2
++    return 0
++
++
++if __name__ == "__main__":
++    sys.exit(main())
+diff --git a/src/arena/backends.py b/src/arena/backends.py
+new file mode 100644
+index 0000000..747c894
+--- /dev/null
++++ b/src/arena/backends.py
+@@ -0,0 +1,402 @@
++import asyncio
++import json
++import os
++import random
++import re
++import shutil
++import tempfile
++import time
++import uuid
++import weakref
++from dataclasses import dataclass
++from typing import Awaitable, Callable, List, Optional, Tuple
++
++from .config import ArenaConfig, SeatSpec
++
++Transcript = List[Tuple[str, str]]  # (role, text) with role in {"user", "agent"}
++
++
++class BackendError(Exception):
++    r"""A model call failed. Non-transient unless a subclass says otherwise."""
++
++
++class TransientBackendError(BackendError):
++    r"""Timeouts, overload, 5xx: retried with backoff."""
++
++
++class UsageLimitReached(BackendError):
++    r"""The subscription's usage window is exhausted: pause the run and resume later."""
++
++
++class FatalBackendError(BackendError):
++    r"""Retrying cannot help (not logged in, CLI missing, bad model): abort the whole run."""
++
++
++class NotLoggedIn(FatalBackendError):
++    pass
++
++
++@dataclass
++class Completion:
++    text: str
++    input_tokens: int = 0
++    output_tokens: int = 0
++    cost_usd: float = 0.0
++    model: str = ""
++    duration_s: float = 0.0
++
++
++PLAYER_FRAMING = (
++    "You are playing a text-based game of The Resistance: Avalon. The user message contains the "
++    "conversation so far: lines from the game moderator are under [Game] headings and your own earlier "
++    "replies are under [You] headings. Reply only with your next message to the moderator, in plain text, "
++    "following any answer template it asks for."
++)
++
++
++def render_transcript(transcript: Transcript) -> str:
++    parts = []
++    for role, text in transcript:
++        parts.append(f"[{'You' if role == 'agent' else 'Game'}]\n{text}")
++    return "\n\n".join(parts)
++
++
++def strip_echoed_label(text: str) -> str:
++    r"""Models sometimes start a reply with the transcript's own "[You]" heading; drop it."""
++    stripped = text.lstrip()
++    if stripped.startswith("[You]"):
++        return stripped[len("[You]"):].lstrip()
++    return text
++
++
++# ---------------------------------------------------------------- claude_cli
++
++AUTH_PATTERNS = re.compile(r"not logged in|please run /login|/login|authenticat|invalid api key|oauth token", re.I)
++USAGE_PATTERNS = re.compile(r"usage limit|limit reached|limit will reset|resets at|out of (extra )?usage|weekly limit", re.I)
++MODEL_PATTERNS = re.compile(r"issue with the selected model|model .* not (found|available)", re.I)
++TRANSIENT_PATTERNS = re.compile(r"overloaded|timed? ?out|connection|temporarily|try again|internal server error", re.I)
++
++
++def classify_cli_failure(status: Optional[int], message: str) -> BackendError:
++    r"""Map a failed `claude -p` call to an error class from its api_error_status and message."""
++    if status in (401, 403) or AUTH_PATTERNS.search(message):
++        return NotLoggedIn(f"Claude Code is not logged in ({message.strip()[:200]}). Run `claude` and log in, then retry.")
++    if USAGE_PATTERNS.search(message):
++        return UsageLimitReached(message.strip()[:300])
++    if status == 404 or MODEL_PATTERNS.search(message):
++        return FatalBackendError(f"model unavailable: {message.strip()[:300]}")
++    if status == 429 or (status is not None and status >= 500) or TRANSIENT_PATTERNS.search(message):
++        return TransientBackendError(f"[{status}] {message.strip()[:300]}")
++    return BackendError(f"[{status}] {message.strip()[:300]}")
++
++
++def resolve_claude_bin(configured: Optional[str]) -> str:
++    path = configured or shutil.which("claude")
++    if not path:
++        raise FatalBackendError("`claude` (Claude Code CLI) not found on PATH. Install Claude Code and run `claude` once to log in.")
++    return path
++
++
++# per event loop (weakly keyed, so a finished loop's objects are never handed to a new one)
++_cli_semaphores = weakref.WeakKeyDictionary()
++
++
++def _cli_semaphore(limit: int) -> asyncio.Semaphore:
++    # one cap per event loop on concurrent `claude` processes, shared by all games and seats
++    per_loop = _cli_semaphores.setdefault(asyncio.get_running_loop(), {})
++    if limit not in per_loop:
++        per_loop[limit] = asyncio.Semaphore(limit)
++    return per_loop[limit]
++
++
++class ClaudeCLIBackend:
++    r"""Runs each completion through `claude -p` (Claude Code headless mode) on the user's own login.
++
++    Tools, MCP servers and settings (hooks, plugins) are disabled, and the process runs in an empty
++    temp dir so no project files or CLAUDE.md are loaded. The prompt goes over stdin and the system
++    prompt through a file, which avoids command-line length limits on Windows.
++    """
++
++    def __init__(self, model: str, cfg: ArenaConfig, effort: Optional[str] = None):
++        self.model = model
++        self.effort = effort
++        self.claude_bin = resolve_claude_bin(cfg.claude_bin)
++        self.timeout_s = cfg.llm_timeout_s
++        self.max_parallel = cfg.cli_max_parallel
++        self._tmp = tempfile.TemporaryDirectory(prefix="avalon-arena-")
++
++    def command(self, system_file: str) -> List[str]:
++        cmd = [
++            self.claude_bin, "-p",
++            "--model", self.model,
++            "--tools", "",
++            "--system-prompt-file", system_file,
++            "--output-format", "json",
++            "--no-session-persistence",
++            "--setting-sources", "",
++            "--strict-mcp-config",
++        ]
++        if self.effort:
++            cmd += ["--effort", self.effort]
++        return cmd
++
++    async def complete(self, system: str, transcript: Transcript) -> Completion:
++        system_file = os.path.join(self._tmp.name, f"system-{uuid.uuid4().hex}.txt")
++        with open(system_file, "w", encoding="utf-8") as f:
++            f.write(PLAYER_FRAMING + "\n\n" + system)
++        prompt = render_transcript(transcript).encode("utf-8")
++        try:
++            async with _cli_semaphore(self.max_parallel):
++                start = time.monotonic()
++                proc = await asyncio.create_subprocess_exec(
++                    *self.command(system_file),
++                    stdin=asyncio.subprocess.PIPE,
++                    stdout=asyncio.subprocess.PIPE,
++                    stderr=asyncio.subprocess.PIPE,
++                    cwd=self._tmp.name,
++                )
++                try:
++                    stdout, stderr = await asyncio.wait_for(proc.communicate(prompt), timeout=self.timeout_s)
++                except BaseException:
++                    # timeout or cancellation: don't leave the child running
++                    if proc.returncode is None:
++                        proc.kill()
++                        await proc.wait()
++                    raise
++                duration = time.monotonic() - start
++        except asyncio.TimeoutError:
++            raise TransientBackendError(f"claude -p timed out after {self.timeout_s}s")
++        except FileNotFoundError:
++            raise FatalBackendError(f"could not run {self.claude_bin!r}; is Claude Code installed?")
++        finally:
++            try:
++                os.remove(system_file)
++            except OSError:
++                pass
++        return self.parse(proc.returncode, stdout.decode("utf-8", "replace"), stderr.decode("utf-8", "replace"), duration)
++
++    def parse(self, returncode: int, stdout: str, stderr: str, duration: float) -> Completion:
++        try:
++            data = json.loads(stdout)
++        except json.JSONDecodeError:
++            raise classify_cli_failure(None, f"exit {returncode}: {stderr or stdout}")
++        if data.get("is_error") or returncode != 0:
++            message = f"{data.get('result') or ''} {stderr}"
++            raise classify_cli_failure(data.get("api_error_status"), message)
++        usage = data.get("usage") or {}
++        model_usage = data.get("modelUsage") or {}
++        return Completion(
++            text=strip_echoed_label(data.get("result") or ""),
++            input_tokens=sum(int(usage.get(k) or 0) for k in
++                             ("input_tokens", "cache_creation_input_tokens", "cache_read_input_tokens")),
++            output_tokens=int(usage.get("output_tokens") or 0),
++            cost_usd=float(data.get("total_cost_usd") or 0.0),
++            model=next(iter(model_usage), self.model),
++            duration_s=round(duration, 3),
++        )
++
++    def close(self):
++        self._tmp.cleanup()
++
++
++# ---------------------------------------------------------------- anthropic (API key)
++
++class ModelRefusal(BackendError):
++    r"""The model declined (stop_reason "refusal"), after any server-side fallback also declined."""
++
++
++API_MODEL_ALIASES = {"haiku": "claude-haiku-5-5", "sonnet": "claude-sonnet-5-5", "opus": "claude-opus-5-5"}
++# models that accept server-side refusal fallback in its `fallbacks: "default"` form (not Haiku)
++SERVER_FALLBACK_MODELS = {"claude-opus-5-5", "claude-opus-5", "claude-fable-5-1", "claude-fable-5", "claude-sonnet-5-5"}
++SERVER_FALLBACK_BETA = "server-side-fallback-2026-07-01"
++# USD per million tokens (input, output) for the cost estimate in logs; cache writes 1.25x, reads 0.1x
++API_PRICES = {
++    "claude-opus-5-5": (4.0, 20.0), "claude-opus-5": (5.0, 25.0), "claude-sonnet-5-5": (2.0, 10.0),
++    "claude-sonnet-5": (2.0, 10.0), "claude-haiku-5-5": (0.10, 0.50), "claude-fable-5-1": (10.0, 50.0),
++}
++
++_api_clients = weakref.WeakKeyDictionary()
++
++
++def _api_client(timeout_s: float):
++    try:
++        import anthropic
++    except ImportError:
++        raise FatalBackendError("provider `anthropic` needs the SDK: pip install 'anthropic>=2.0.0'")
++    per_loop = _api_clients.setdefault(asyncio.get_running_loop(), {})
++    if timeout_s not in per_loop:
++        # credentials resolve as usual: ANTHROPIC_API_KEY, ANTHROPIC_AUTH_TOKEN, or an `ant auth login` profile.
++        # max_retries=0: transient failures are retried (and logged) by ArenaSession instead.
++        per_loop[timeout_s] = anthropic.AsyncAnthropic(max_retries=0, timeout=timeout_s)
++    return per_loop[timeout_s]
++
++
++def classify_api_error(exc) -> BackendError:
++    import anthropic
++
++    message = f"{type(exc).__name__}: {getattr(exc, 'message', exc)}"
++    if isinstance(exc, (anthropic.AuthenticationError, anthropic.PermissionDeniedError)):
++        return NotLoggedIn(f"API key rejected ({message}). Set ANTHROPIC_API_KEY to a valid key.")
++    if isinstance(exc, anthropic.NotFoundError):
++        return FatalBackendError(f"model unavailable: {message}")
++    if isinstance(exc, (anthropic.RateLimitError, anthropic.InternalServerError, anthropic.APIConnectionError)):
++        return TransientBackendError(message)
++    if isinstance(exc, anthropic.APIStatusError):
++        if exc.status_code == 402:  # billing_error: out of credits
++            return UsageLimitReached(f"API credits exhausted ({message})")
++        if exc.status_code >= 500:
++            return TransientBackendError(message)
++    return BackendError(message)
++
++
++class AnthropicBackend:
++    r"""Calls the Claude API with the official SDK, for anyone who has an API key.
++
++    No sampling parameters (rejected since API version 2026-10-21), an explicit effort level,
++    automatic prompt caching (each seat's transcript only grows), and server-side refusal fallback
++    on the models that support it.
++    """
++
++    def __init__(self, model: str, cfg: ArenaConfig, effort: Optional[str]):
++        self.model = API_MODEL_ALIASES.get(model, model)
++        self.effort = effort
++        self.timeout_s = cfg.llm_timeout_s
++        self.max_tokens = cfg.api_max_tokens
++
++    def request(self, system: str, transcript: Transcript) -> dict:
++        messages = [{"role": "assistant" if role == "agent" else "user", "content": text} for role, text in transcript]
++        if not messages or messages[0]["role"] != "user":
++            # the history window can start on one of our own replies; the API needs a user turn first
++            messages.insert(0, {"role": "user", "content": "(earlier conversation omitted)"})
++        params = dict(model=self.model, max_tokens=self.max_tokens, messages=messages,
++                      cache_control={"type": "ephemeral"})
++        if system:
++            params["system"] = system
++        if self.effort:
++            params["output_config"] = {"effort": self.effort}
++        if self.model in SERVER_FALLBACK_MODELS:
++            params["betas"] = [SERVER_FALLBACK_BETA]
++            params["fallbacks"] = "default"
++        return params
++
++    async def complete(self, system: str, transcript: Transcript) -> Completion:
++        import anthropic
++
++        start = time.monotonic()
++        try:
++            client = _api_client(self.timeout_s)  # resolving credentials can fail here
++            response = await client.beta.messages.create(**self.request(system, transcript))
++        except anthropic.APIError as e:
++            raise classify_api_error(e) from e
++        except anthropic.AnthropicError as e:  # e.g. no credentials configured
++            raise NotLoggedIn(f"{type(e).__name__}: {e}. Set ANTHROPIC_API_KEY.") from e
++        if response.stop_reason == "refusal":
++            details = getattr(response, "stop_details", None)
++            raise ModelRefusal(f"model declined (category: {getattr(details, 'category', None)})")
++        usage = response.usage
++        written = usage.cache_creation_input_tokens or 0
++        read = usage.cache_read_input_tokens or 0
++        price_in, price_out = API_PRICES.get(response.model, (0.0, 0.0))
++        cost = (usage.input_tokens * price_in + written * price_in * 1.25 + read * price_in * 0.1
++                + usage.output_tokens * price_out) / 1e6
++        return Completion(
++            text="".join(b.text for b in response.content if b.type == "text"),
++            input_tokens=usage.input_tokens + written + read,
++            output_tokens=usage.output_tokens,
++            cost_usd=round(cost, 6),
++            model=response.model,
++            duration_s=round(time.monotonic() - start, 3),
++        )
++
++    def close(self):
++        pass
++
++
++# ---------------------------------------------------------------- fake
++
++class FakeBackend:
++    r"""Scripted, offline responder: answers every prompt the arena sends in the format it parses.
++
++    Used to check an install end to end (`run --fake`) and in tests. Decisions are random but seeded.
++    """
++
++    def __init__(self, seed: int):
++        self.rng = random.Random(seed)
++        self.model = "fake"
++
++    async def complete(self, system: str, transcript: Transcript) -> Completion:
++        last = transcript[-1][1] if transcript else system
++        await asyncio.sleep(0)
++        return Completion(text=self.respond(last), model=self.model)
++
++    def respond(self, last: str) -> str:
++        if m := re.search(r"Please choose (\d+) players", last):
++            team = sorted(self.rng.sample(range(5), int(m.group(1))))
++            return f"I will pick TEAM={team}"
++        if "what team does the player choose" in last:
++            picked = re.findall(r"TEAM=(\[[^\]]*\])", last)
++            return "Answer: " + (picked[-1] if picked else "[0, 1]")
++        if "approve the team" in last or "support the quest" in last:
++            return "Answer: " + self.rng.choice(["Yes", "Yes", "No"])
++        if "which player will be assassinated" in last:
++            return f"Answer: [{self.rng.randrange(5)}]"
++        if "believe for each player to be Good" in last:
++            return "Answer: {" + ", ".join(f"{i}: {self.rng.random():.2f}" for i in range(5)) + "}"
++        return "I have no strong read yet; let's watch how people vote."
++
++    def close(self):
++        pass
++
++
++def make_backend(spec: SeatSpec, cfg: ArenaConfig, seed: int, model: Optional[str] = None):
++    if spec.provider == "fake":
++        return FakeBackend(seed)
++    if spec.provider == "anthropic":
++        return AnthropicBackend(model or spec.model, cfg, spec.effort)
++    return ClaudeCLIBackend(model or spec.model, cfg, spec.effort)
++
++
++# ---------------------------------------------------------------- search-agent planner bridge
++
++def _load_llm_model_base():
++    from strategist.searchlightimprove.llm_utils.llm_api_models import LLMModel
++    return LLMModel
++
++
++def make_planner_llm(call: Callable[[str, Transcript], Awaitable[Completion]], loop: asyncio.AbstractEventLoop,
++                     seat: int, on_event: Callable[..., None]):
++    r"""An `LLMModel` for the search agent's planner that runs `call` (a retrying completion) on the game's loop.
++
++    The planner is synchronous and runs in a worker thread (see search_agent.py), so each call is
++    submitted to the loop with `run_coroutine_threadsafe` and waited on from that thread.
++    """
++    LLMModel = _load_llm_model_base()
++
++    class ArenaLLMModel(LLMModel):
++        def __init__(self):
++            super().__init__()
++            self.num_input_tokens = 0
++            self.num_output_tokens = 0
++
++        def _generate(self, input_prompt: str, num_responses=1, temperature: float = -1.0) -> list:
++            n = max(1, num_responses)
++            async def all_calls():
++                # built on the loop: this method runs in a worker thread with no running loop
++                return await asyncio.gather(*(call("", [("user", input_prompt)]) for _ in range(n)))
++
++            results = asyncio.run_coroutine_threadsafe(all_calls(), loop).result()
++            for c in results:
++                self.num_input_tokens += c.input_tokens
++                self.num_output_tokens += c.output_tokens
++                on_event("llm_call", seat=seat, source="planner", prompt=input_prompt, response=c.text,
++                         model=c.model, input_tokens=c.input_tokens, output_tokens=c.output_tokens,
++                         cost_usd=c.cost_usd, latency_s=c.duration_s)
++            return [c.text for c in results]
++
++        def get_num_total_tokens(self) -> int:
++            return self.num_input_tokens + self.num_output_tokens
++
++        def get_num_output_tokens(self) -> int:
++            return self.num_output_tokens
++
++    return ArenaLLMModel()
+diff --git a/src/arena/config.py b/src/arena/config.py
+new file mode 100644
+index 0000000..73c43bd
+--- /dev/null
++++ b/src/arena/config.py
+@@ -0,0 +1,98 @@
++import hashlib
++import json
++from typing import List, Literal, Optional
++
++import yaml
++from pydantic import BaseModel, validator, root_validator
++
++NUM_PLAYERS = 5
++# model used when a seat doesn't name one
++DEFAULT_MODELS = {"claude_cli": "sonnet", "anthropic": "claude-opus-5-5", "fake": "fake"}
++VALID_ROLES = {"Merlin", "Percival", "Morgana", "Mordred", "Oberon", "Servant", "Minion", "Assassin"}
++EVIL_ROLES = {"Morgana", "Mordred", "Oberon", "Minion", "Assassin"}
++
++# fields that can change between resumes without affecting game outcomes
++NON_SEMANTIC_FIELDS = {"concurrency", "num_games", "claude_bin", "cli_max_parallel", "llm_timeout_s",
++                       "llm_max_retries", "max_game_retries", "backoff_base_s", "backoff_max_s"}
++
++
++class SeatSpec(BaseModel):
++    r"""One participant in the game. Seat shuffling permutes these across seats."""
++    agent: Literal["llm", "search", "recon"]
++    provider: Literal["claude_cli", "anthropic", "fake"] = "claude_cli"
++    # claude_cli: a Claude Code alias or id (haiku / sonnet / opus); anthropic: an API model id
++    # (the aliases haiku / sonnet / opus also work). Defaults per provider: DEFAULT_MODELS.
++    model: Optional[str] = None
++    effort: Optional[Literal["low", "medium", "high", "xhigh", "max"]] = "medium"  # reasoning effort; null to omit
++    planner_model: Optional[str] = None  # search/recon planner's model; defaults to `model`
++    planner_num_rollout: int = 100       # search/recon MCTS rollouts per decision (CPU-bound)
++    planner_node_budget: int = 100       # search/recon MCTS node budget per decision
++    name: Optional[str] = None           # stable participant id; defaults to "<agent>:<model>#<index>"
++
++
++class ArenaConfig(BaseModel):
++    num_players: int = NUM_PLAYERS
++    seats: List[SeatSpec]
++    roles: List[str] = ["Merlin", "Servant", "Servant", "Assassin", "Minion"]
++
++    num_games: int = 1
++    base_seed: int = 0
++    shuffle_roles: bool = True
++    shuffle_seats: bool = True
++    random_leader: bool = True
++    discussion: bool = True
++    reply_max_words: Optional[int] = None  # ask every player to keep replies under this many words
++
++    concurrency: int = 1
++    max_game_retries: int = 2
++    llm_max_retries: int = 5
++    llm_timeout_s: float = 180.0
++    claude_bin: Optional[str] = None     # path to the Claude Code CLI; defaults to `claude` on PATH
++    cli_max_parallel: int = 2            # max concurrent `claude -p` processes across all games
++    api_max_tokens: int = 16000          # anthropic: max_tokens per request
++    backoff_base_s: float = 2.0
++    backoff_max_s: float = 60.0
++
++    @validator("num_players")
++    def _five_players(cls, v):
++        if v != NUM_PLAYERS:
++            raise ValueError(f"only {NUM_PLAYERS}-player games are supported")
++        return v
++
++    @validator("roles")
++    def _valid_roles(cls, v):
++        unknown = set(v) - VALID_ROLES
++        if unknown:
++            raise ValueError(f"unknown roles: {sorted(unknown)}")
++        if v.count("Assassin") != 1:
++            raise ValueError("exactly one Assassin is required")
++        if sum(r in EVIL_ROLES for r in v) != 2:
++            raise ValueError("a 5-player game needs exactly 2 evil roles")
++        return v
++
++    @root_validator(skip_on_failure=True)
++    def _sizes_and_names(cls, values):
++        n = values["num_players"]
++        if len(values["seats"]) != n:
++            raise ValueError(f"expected {n} seats, got {len(values['seats'])}")
++        if len(values["roles"]) != n:
++            raise ValueError(f"expected {n} roles, got {len(values['roles'])}")
++        for i, seat in enumerate(values["seats"]):
++            if seat.model is None:
++                seat.model = DEFAULT_MODELS[seat.provider]
++            if seat.name is None:
++                seat.name = f"{seat.agent}:{seat.model}#{i}"
++        names = [s.name for s in values["seats"]]
++        if len(set(names)) != len(names):
++            raise ValueError(f"seat names must be unique: {names}")
++        return values
++
++    def config_hash(self) -> str:
++        semantic = self.dict(exclude=NON_SEMANTIC_FIELDS)
++        blob = json.dumps(semantic, sort_keys=True).encode()
++        return hashlib.sha256(blob).hexdigest()[:16]
++
++
++def load_config(path: str) -> ArenaConfig:
++    with open(path, encoding="utf-8") as f:
++        return ArenaConfig.parse_obj(yaml.safe_load(f))
+diff --git a/src/arena/events.py b/src/arena/events.py
+new file mode 100644
+index 0000000..f1ae50b
+--- /dev/null
++++ b/src/arena/events.py
+@@ -0,0 +1,83 @@
++import json
++import os
++import time
++from typing import Any, Dict, List
++
++import numpy as np
++
++SCHEMA_VERSION = 1
++
++
++def _default(o):
++    if isinstance(o, (np.integer,)):
++        return int(o)
++    if isinstance(o, (np.floating,)):
++        return float(o)
++    if isinstance(o, (np.bool_,)):
++        return bool(o)
++    if isinstance(o, (np.ndarray, set, frozenset, tuple)):
++        return list(o.tolist() if isinstance(o, np.ndarray) else o)
++    if hasattr(o, "dict"):
++        return o.dict()
++    return str(o)
++
++
++class EventLog:
++    r"""Append-only JSONL event log for one game attempt.
++
++    Every event is flushed and fsync'd so a crash loses at most the line being written.
++    """
++
++    def __init__(self, path: str, run_id: str, game_idx: int, attempt: int = 0):
++        self.path = path
++        self.run_id = run_id
++        self.game_idx = game_idx
++        self.attempt = attempt
++        self.seq = 0
++        os.makedirs(os.path.dirname(path), exist_ok=True)
++        self._f = open(path, "a", encoding="utf-8")
++
++    def emit(self, type: str, **data: Any) -> Dict[str, Any]:
++        event = {
++            "v": SCHEMA_VERSION,
++            "run_id": self.run_id,
++            "game_idx": self.game_idx,
++            "attempt": self.attempt,
++            "seq": self.seq,
++            "ts": time.time(),
++            "type": type,
++            "data": data,
++        }
++        self._f.write(json.dumps(event, default=_default, ensure_ascii=False) + "\n")
++        self._f.flush()
++        os.fsync(self._f.fileno())
++        self.seq += 1
++        return event
++
++    def close(self):
++        if not self._f.closed:
++            self._f.close()
++
++    def __enter__(self):
++        return self
++
++    def __exit__(self, *exc):
++        self.close()
++
++
++def read_events(path: str) -> List[Dict[str, Any]]:
++    r"""Read a JSONL event log, ignoring a truncated final line from an interrupted write."""
++    events = []
++    with open(path, encoding="utf-8") as f:
++        lines = f.readlines()
++    for i, line in enumerate(lines):
++        line = line.strip()
++        if not line:
++            continue
++        try:
++            events.append(json.loads(line))
++        except json.JSONDecodeError:
++            if i == len(lines) - 1:
++                break
++            raise
++    return events
+diff --git a/src/arena/game.py b/src/arena/game.py
+new file mode 100644
+index 0000000..fddf5fb
+--- /dev/null
++++ b/src/arena/game.py
+@@ -0,0 +1,249 @@
++import asyncio
++from typing import Any, Dict
++
++from multi_agent.proxy import MultiAgentProxy
++from good_examples.Avalon.value_heuristics.list import functions as avalon_func
++from src.server.tasks.avalon.dialogue import AvalonDiagloue
++from src.server.tasks.avalon.engine import AvalonGameEnvironment
++from src.server.tasks.avalon.task import AGENT_FINDER, dialogue_guides
++from src.server.tasks.avalon.task_scoring import AvalonScoring
++from src.server.tasks.avalon.wrapper import AvalonSessionWrapper
++
++from .config import ArenaConfig
++from .events import EventLog
++from .seeding import GameSetup
++from .backends import make_backend, make_planner_llm
++from .session import ArenaSession
++
++
++def _build_agent(seat: int, setup: GameSetup, env, cfg: ArenaConfig, session, role_i, role_name, side, planner_llm=None):
++    spec = setup.seat_specs[seat]
++    kwargs = dict(
++        id=seat,
++        name=f"Player {seat}",
++        config=env.config,
++        side=side,
++        role=role_i,
++        num_players=cfg.num_players,
++        session=session,
++        role_name=role_name,
++        merlin=env.config.merlin,
++        percival=env.config.percival,
++        morgana=env.config.morgana,
++        mordred=env.config.mordred,
++        oberon=env.config.oberon,
++        num_good=env.config.num_good,
++        num_evil=env.config.num_evil,
++        discussion=cfg.discussion,
++        seed=setup.agent_seeds[seat],
++    )
++    if spec.agent in ("search", "recon"):
++        kwargs.update(func_str=avalon_func[1], guides=dialogue_guides[spec.agent], planner_llm=planner_llm,
++                      num_rollout=spec.planner_num_rollout, node_budget=spec.planner_node_budget)
++    return AGENT_FINDER[spec.agent](**kwargs)
++
++
++async def play_game(setup: GameSetup, cfg: ArenaConfig, log: EventLog) -> Dict[str, Any]:
++    r"""Play one game end to end, emitting events to `log`. Returns the `game_end` payload."""
++    backends = []
++    try:
++        return await _play_game(setup, cfg, log, backends)
++    finally:
++        for backend in backends:
++            backend.close()
++
++
++async def _play_game(setup: GameSetup, cfg: ArenaConfig, log: EventLog, backends: list) -> Dict[str, Any]:
++    num_players = cfg.num_players
++    env = AvalonGameEnvironment.from_presets(setup.presets())
++    scoring = AvalonScoring(env.config)
++
++    for i, spec in enumerate(setup.seat_specs):
++        backends.append(make_backend(spec, cfg, seed=setup.agent_seeds[i]))
++    session = ArenaSession(
++        backends=list(backends),
++        max_retries=cfg.llm_max_retries,
++        backoff_base_s=cfg.backoff_base_s,
++        backoff_max_s=cfg.backoff_max_s,
++        on_event=log.emit,
++        reply_max_words=cfg.reply_max_words,
++    )
++    proxy = MultiAgentProxy(session, num_players)
++    session.proxy = proxy
++    sessions = [AvalonSessionWrapper(session, proxy) for _ in range(num_players)]
++    proxy.initialize_sessions(sessions)
++
++    log.emit(
++        "game_start",
++        seed=setup.seed,
++        config_hash=cfg.config_hash(),
++        quest_leader=setup.quest_leader,
++        seats=[
++            {
++                "seat": i,
++                "participant": setup.seat_participants[i],
++                "name": spec.name,
++                "agent": spec.agent,
++                "provider": spec.provider,
++                "model": spec.model,
++                "planner_model": spec.planner_model,
++                "role": setup.role_names[i],
++                "agent_seed": setup.agent_seeds[i],
++            }
++            for i, spec in enumerate(setup.seat_specs)
++        ],
++    )
++
++    player_list = []
++    player_sides = [side for _, _, side in env.get_roles()]
++    loop = asyncio.get_running_loop()
++    for i, (role_i, role_name, side) in enumerate(env.get_roles()):
++        planner_llm = None
++        spec = setup.seat_specs[i]
++        if spec.agent in ("search", "recon"):
++            planner_backend = make_backend(spec, cfg, seed=setup.agent_seeds[i] + 1,
++                                           model=spec.planner_model or spec.model)
++            backends.append(planner_backend)
++            planner_llm = make_planner_llm(
++                lambda system, transcript, b=planner_backend, seat=i: session.call(b, seat, system, transcript),
++                loop, seat=i, on_event=log.emit,
++            )
++        player = _build_agent(i, setup, env, cfg, sessions[i], role_i, role_name, side, planner_llm)
++        player_list.append(player)
++        proxy.set_current_agent(i)
++        # Merlin and evil players see the sides of all players
++        if player.role == 0 or player.side == 0:
++            player.see_sides(player_sides)
++        await player.initialize_game_info(player_list=env.get_roles(), env=env)
++
++    dialogue_history = AvalonDiagloue()
++
++    while not env.done:
++        phase = env.get_phase()[0]
++
++        if phase == 0:
++            leader = env.get_quest_leader()
++            if cfg.discussion:
++                for idx, player in enumerate(player_list):
++                    proxy.set_current_agent(idx)
++                    await player.summarize(env=env)
++                # leader speaks first, then the others in seat order
++                for offset in range(num_players):
++                    seat = (leader + offset) % num_players
++                    proxy.set_current_agent(seat)
++                    text = await player_list[seat].team_discussion(
++                        team_size=env.get_team_size(),
++                        team_leader_id=leader,
++                        mission_id=env.turn,
++                        env=env,
++                        dialogue_history=dialogue_history,
++                    )
++                    dialogue_history.append(seat, text)
++                    log.emit("discussion", quest=env.turn, round=env.round, seat=seat,
++                             is_leader=seat == leader, text=text)
++
++            proxy.set_current_agent(leader)
++            team = await player_list[leader].propose_team(
++                team_size=env.get_team_size(),
++                mission_id=env.turn,
++                env=env,
++            )
++            env.choose_quest_team(team=frozenset(team), leader=leader)
++            log.emit("team_proposed", quest=env.turn, round=env.round, leader=leader, team=sorted(team))
++
++        elif phase == 1:
++            quest, round_ = env.turn, env.round
++            votes = []
++            for i in range(num_players):
++                proxy.set_current_agent(i)
++                votes.append(await player_list[i].vote_on_team(
++                    team=env.get_current_quest_team(),
++                    mission_id=env.turn,
++                    env=env,
++                ))
++            outcome = env.gather_team_votes(votes)
++            log.emit("team_votes", quest=quest, round=round_, votes=votes)
++
++            for idx, player in enumerate(player_list):
++                proxy.set_current_agent(idx)
++                await player.observe_team_result(
++                    mission_id=env.turn,
++                    team=env.get_current_quest_team(),
++                    votes=votes,
++                    outcome=outcome[2],
++                )
++            log.emit("team_result", quest=quest, round=round_,
++                     team=sorted(env.get_current_quest_team()), approved=bool(outcome[2]))
++
++        elif phase == 2:
++            quest = env.turn
++            team = sorted(env.get_current_quest_team())
++            votes = []
++            for i in team:
++                proxy.set_current_agent(i)
++                votes.append(await player_list[i].vote_on_mission(
++                    team=env.get_current_quest_team(),
++                    mission_id=env.turn,
++                    env=env,
++                ))
++            outcome = env.gather_quest_votes(votes)
++            log.emit("quest_votes", quest=quest, team=team, votes=dict(zip(team, votes)))
++
++            for idx, player in enumerate(player_list):
++                proxy.set_current_agent(idx)
++                await player.observe_mission(
++                    team=env.get_current_quest_team(),
++                    mission_id=env.turn - 1,
++                    num_fails=outcome[3],
++                    votes=votes,
++                    outcome=outcome[2],
++                    env=env,
++                )
++            log.emit("quest_result", quest=quest, team=team, succeeded=bool(outcome[2]),
++                     num_fails=int(outcome[3]), quest_results=[bool(r) for r in env.quest_results])
++
++        elif phase == 3:
++            assassin = int(env.get_assassin())
++            proxy.set_current_agent(assassin)
++            target = int(await player_list[assassin].assassinate(env=env))
++            env.choose_assassination_target(assassin, target)
++            log.emit("assassination", assassin=assassin, target=target,
++                     hit_merlin=setup.role_names[target] == "Merlin")
++
++    # every seat reports beliefs, since any seat may hold an LLM of interest after shuffling
++    true_sides = [int(s) for s in env.is_good]
++    beliefs = []
++    for idx, player in enumerate(player_list):
++        proxy.set_current_agent(idx)
++        believed = await player.get_believed_sides(num_players=num_players, env=env)
++        beliefs.append([float(b) for b in believed])
++    log.emit("beliefs", true_sides=true_sides, believed=beliefs)
++
++    if env.good_victory:
++        winner, reason = "good", "missions_and_assassin_missed"
++    elif sum(env.quest_results) >= 3:
++        winner, reason = "evil", "assassination"
++    else:
++        winner, reason = "evil", "missions"
++
++    seats = []
++    for i, spec in enumerate(setup.seat_specs):
++        is_good = bool(env.is_good[i])
++        seats.append({
++            "seat": i,
++            "name": spec.name,
++            "agent": spec.agent,
++            "model": spec.model,
++            "role": setup.role_names[i],
++            "side": "good" if is_good else "evil",
++            "won": is_good == (winner == "good"),
++            "deduction_acc": float(scoring.deduction_acc([true_sides], [beliefs[i]])),
++        })
++
++    return {
++        "status": "completed",
++        "winner": winner,
++        "reason": reason,
++        "quest_results": [bool(r) for r in env.quest_results],
++        "seats": seats,
++    }
+diff --git a/src/arena/retry.py b/src/arena/retry.py
+new file mode 100644
+index 0000000..adcb994
+--- /dev/null
++++ b/src/arena/retry.py
+@@ -0,0 +1,49 @@
++import asyncio
++import random
++from typing import Awaitable, Callable, Optional, TypeVar
++
++T = TypeVar("T")
++
++# matched against class names in the exception's MRO, so we don't need to import every SDK
++TRANSIENT_NAME_HINTS = (
++    "RateLimit", "Timeout", "APIConnection", "ConnectionError", "InternalServer",
++    "ServiceUnavailable", "Overloaded", "APIStatusError", "ServerError", "ClientOSError",
++    "ServerDisconnected", "Transient",
++)
++
++
++def is_transient(exc: BaseException) -> bool:
++    if isinstance(exc, (asyncio.TimeoutError, TimeoutError, ConnectionError)):
++        return True
++    names = [cls.__name__ for cls in type(exc).__mro__]
++    return any(hint in name for name in names for hint in TRANSIENT_NAME_HINTS)
++
++
++def backoff_delay(attempt: int, base: float, cap: float, rng: Optional[random.Random] = None) -> float:
++    r"""Full-jitter exponential backoff: uniform(0, min(cap, base * 2**attempt))."""
++    rng = rng or random
++    return rng.uniform(0, min(cap, base * (2 ** attempt)))
++
++
++async def retry_async(
++    fn: Callable[[], Awaitable[T]],
++    max_retries: int,
++    base: float,
++    cap: float,
++    should_retry: Callable[[BaseException], bool] = is_transient,
++    on_retry: Optional[Callable[[int, BaseException, float], None]] = None,
++) -> T:
++    attempt = 0
++    while True:
++        try:
++            return await fn()
++        except asyncio.CancelledError:
++            raise
++        except Exception as e:
++            if attempt >= max_retries or not should_retry(e):
++                raise
++            delay = backoff_delay(attempt, base, cap)
++            if on_retry is not None:
++                on_retry(attempt, e, delay)
++            await asyncio.sleep(delay)
++            attempt += 1
+diff --git a/src/arena/runner.py b/src/arena/runner.py
+new file mode 100644
+index 0000000..3383f02
+--- /dev/null
++++ b/src/arena/runner.py
+@@ -0,0 +1,227 @@
++import asyncio
++import glob
++import json
++import os
++import re
++import subprocess
++import time
++import traceback
++from typing import Awaitable, Callable, Dict, List, Optional, Tuple
++
++from .backends import FatalBackendError, UsageLimitReached
++from .config import ArenaConfig
++from .events import EventLog, read_events
++from .retry import backoff_delay, is_transient
++from .seeding import GameSetup, deal
++
++# outcomes of the models themselves: recorded as final and never retried or re-run
++TERMINAL_STATUSES = {"completed", "agent_invalid_action", "context_limit", "refusal"}
++
++PlayFn = Callable[[GameSetup, ArenaConfig, EventLog], Awaitable[Dict]]
++
++
++def game_path(run_dir: str, game_idx: int) -> str:
++    return os.path.join(run_dir, "games", f"game_{game_idx:05d}.jsonl")
++
++
++def game_status(path: str) -> Optional[str]:
++    r"""Status from the log's `game_end` event, or None if the game never finished."""
++    if not os.path.exists(path):
++        return None
++    events = read_events(path)
++    if events and events[-1]["type"] == "game_end":
++        return events[-1]["data"].get("status")
++    return None
++
++
++def archive_partial(path: str) -> Optional[str]:
++    r"""Move an unfinished/failed attempt aside so the game can be replayed from scratch."""
++    if not os.path.exists(path):
++        return None
++    base = path[: -len(".jsonl")]
++    taken = [int(m.group(1)) for p in glob.glob(f"{base}.attempt*.partial.jsonl")
++             if (m := re.search(r"\.attempt(\d+)\.partial\.jsonl$", p))]
++    dest = f"{base}.attempt{max(taken, default=-1) + 1}.partial.jsonl"
++    os.replace(path, dest)
++    return dest
++
++
++def _git_sha() -> Optional[str]:
++    try:
++        return subprocess.run(["git", "rev-parse", "HEAD"], capture_output=True, text=True,
++                              check=True).stdout.strip()
++    except Exception:
++        return None
++
++
++def _git_dirty() -> Optional[bool]:
++    r"""True if tracked files have uncommitted changes, so `git_sha` alone doesn't reproduce the code."""
++    try:
++        out = subprocess.run(["git", "status", "--porcelain", "--untracked-files=no"],
++                             capture_output=True, text=True, check=True).stdout
++        return bool(out.strip())
++    except Exception:
++        return None
++
++
++def ensure_manifest(cfg: ArenaConfig, run_dir: str, force: bool = False) -> str:
++    r"""Create the run manifest, or check that an existing run uses the same game-affecting config."""
++    os.makedirs(os.path.join(run_dir, "games"), exist_ok=True)
++    path = os.path.join(run_dir, "manifest.json")
++    run_id = os.path.basename(os.path.normpath(run_dir))
++    if os.path.exists(path) and not force:
++        with open(path) as f:
++            manifest = json.load(f)
++        if manifest["config_hash"] != cfg.config_hash():
++            raise RuntimeError(
++                f"{run_dir} was created with a different config (hash {manifest['config_hash']} != "
++                f"{cfg.config_hash()}); use a new run dir or pass --force"
++            )
++        return manifest["run_id"]
++    manifest = {
++        "run_id": run_id,
++        "created_at": time.time(),
++        "config_hash": cfg.config_hash(),
++        "git_sha": _git_sha(),
++        "git_dirty": _git_dirty(),
++        "config": cfg.dict(),
++    }
++    with open(path, "w") as f:
++        json.dump(manifest, f, indent=2)
++    return run_id
++
++
++def write_pause(run_dir: str, reason: str):
++    with open(os.path.join(run_dir, "paused.json"), "w", encoding="utf-8") as f:
++        json.dump({"paused_at": time.time(), "reason": reason}, f, indent=2)
++
++
++def clear_pause(run_dir: str):
++    try:
++        os.remove(os.path.join(run_dir, "paused.json"))
++    except FileNotFoundError:
++        pass
++
++
++def _default_play_fn() -> PlayFn:
++    # imported lazily: pulls in the LLM/agent stack, which tests and `summarize` don't need
++    from .game import play_game
++    return play_game
++
++
++# matched by class name: importing src.server.tasks.avalon pulls in the whole agent stack
++MODEL_FAILURES = {
++    "AvalonAgentActionException": "agent_invalid_action",
++    "AgentContextLimitException": "context_limit",
++    "ModelRefusal": "refusal",
++}
++
++
++def _classify(exc: BaseException) -> Optional[str]:
++    r"""Terminal status for model-caused failures; None means infra failure (retryable)."""
++    for cls in type(exc).__mro__:
++        if cls.__name__ in MODEL_FAILURES:
++            return MODEL_FAILURES[cls.__name__]
++    return None
++
++
++def _append_result(run_dir: str, end: Dict):
++    with open(os.path.join(run_dir, "results.jsonl"), "a", encoding="utf-8") as f:
++        f.write(json.dumps(end) + "\n")
++        f.flush()
++        os.fsync(f.fileno())
++
++
++async def run_game(cfg: ArenaConfig, run_dir: str, run_id: str, game_idx: int,
++                   play_fn: PlayFn, log_fn=print) -> Dict:
++    setup = deal(cfg, game_idx)
++    path = game_path(run_dir, game_idx)
++    attempt = 0
++    while True:
++        log = EventLog(path, run_id=run_id, game_idx=game_idx, attempt=attempt)
++        try:
++            result = await play_fn(setup, cfg, log)
++            end = log.emit("game_end", **result)
++        except asyncio.CancelledError:
++            # leave the partial log in place; the next resume archives and replays it
++            raise
++        except (FatalBackendError, UsageLimitReached) as e:
++            # run-level problems: no game_end, so the next resume replays this game
++            log.emit("error", error=f"{type(e).__name__}: {e}", scope="run")
++            raise
++        except Exception as e:
++            error = f"{type(e).__name__}: {e}"
++            log.emit("error", error=error, traceback=traceback.format_exc(), transient=is_transient(e))
++            status = _classify(e)
++            if status is None and attempt < cfg.max_game_retries:
++                delay = backoff_delay(attempt, cfg.backoff_base_s, cfg.backoff_max_s)
++                log.emit("retry", scope="game", attempt=attempt, error=error, delay_s=delay)
++                log.close()
++                archive_partial(path)
++                log_fn(f"[game {game_idx}] attempt {attempt} failed ({error}); retrying in {delay:.1f}s")
++                await asyncio.sleep(delay)
++                attempt += 1
++                continue
++            end = log.emit("game_end", status=status or "failed", error=error)
++        finally:
++            log.close()
++
++        _append_result(run_dir, end)
++        log_fn(f"[game {game_idx}] {end['data'].get('status')} "
++               f"{end['data'].get('winner', '')} {end['data'].get('reason', '')}".rstrip())
++        return end
++
++
++def plan_games(cfg: ArenaConfig, run_dir: str, shard: Tuple[int, int]) -> Tuple[List[int], List[int]]:
++    r"""Split this shard's games into (to_run, already_done), archiving any unfinished attempts."""
++    shard_idx, num_shards = shard
++    to_run, done = [], []
++    for idx in range(cfg.num_games):
++        if idx % num_shards != shard_idx:
++            continue
++        path = game_path(run_dir, idx)
++        if game_status(path) in TERMINAL_STATUSES:
++            done.append(idx)
++            continue
++        archive_partial(path)
++        to_run.append(idx)
++    return to_run, done
++
++
++async def run(cfg: ArenaConfig, run_dir: str, shard: Tuple[int, int] = (0, 1), force: bool = False,
++              play_fn: Optional[PlayFn] = None, log_fn=print) -> List[Dict]:
++    shard_idx, num_shards = shard
++    if not 0 <= shard_idx < num_shards:
++        raise ValueError(f"invalid shard {shard_idx}/{num_shards}")
++    run_id = ensure_manifest(cfg, run_dir, force=force)
++    play_fn = play_fn or _default_play_fn()
++
++    to_run, done = plan_games(cfg, run_dir, shard)
++    log_fn(f"run {run_id} shard {shard_idx}/{num_shards}: {len(done)} done, {len(to_run)} to run")
++
++    clear_pause(run_dir)
++    sem = asyncio.Semaphore(cfg.concurrency)
++
++    aborted = asyncio.Event()
++
++    async def guarded(idx: int):
++        async with sem:
++            if aborted.is_set():
++                return None
++            try:
++                return await run_game(cfg, run_dir, run_id, idx, play_fn, log_fn)
++            except (FatalBackendError, UsageLimitReached):
++                aborted.set()  # before releasing the slot, so no queued game starts
++                raise
++
++    tasks = [asyncio.ensure_future(guarded(i)) for i in to_run]
++    try:
++        return list(await asyncio.gather(*tasks))
++    except BaseException as e:
++        # stop every other game too; their partial logs are replayed on resume
++        for t in tasks:
++            t.cancel()
++        await asyncio.gather(*tasks, return_exceptions=True)
++        if isinstance(e, UsageLimitReached):
++            write_pause(run_dir, str(e))
++        raise
+diff --git a/src/arena/seeding.py b/src/arena/seeding.py
+new file mode 100644
+index 0000000..c590140
+--- /dev/null
++++ b/src/arena/seeding.py
+@@ -0,0 +1,66 @@
++from typing import List
++
++import numpy as np
++from pydantic import BaseModel
++
++from .config import ArenaConfig, SeatSpec
++
++# order matters: each name gets its own child stream of SeedSequence([base_seed, game_idx])
++STREAMS = ("roles", "seats", "leader", "agents")
++
++
++class GameSetup(BaseModel):
++    game_idx: int
++    seed: List[int]                 # SeedSequence entropy: [base_seed, game_idx]
++    seat_specs: List[SeatSpec]      # participant sitting at each seat
++    seat_participants: List[int]    # index into cfg.seats for each seat
++    role_names: List[str]           # role at each seat
++    quest_leader: int
++    agent_seeds: List[int]          # per-seat seed for agent-internal RNG
++
++    def presets(self) -> dict:
++        r"""Presets accepted by `AvalonGameEnvironment.from_presets`."""
++        return {
++            "num_players": len(self.role_names),
++            "quest_leader": self.quest_leader,
++            "role_names": list(self.role_names),
++        }
++
++
++def game_streams(base_seed: int, game_idx: int) -> dict:
++    children = np.random.SeedSequence([base_seed, game_idx]).spawn(len(STREAMS))
++    return {name: np.random.default_rng(child) for name, child in zip(STREAMS, children)}
++
++
++def deal(cfg: ArenaConfig, game_idx: int) -> GameSetup:
++    r"""Deterministically derive a game's setup from (base_seed, game_idx).
++
++    Role, seat, leader and agent streams are independent, so toggling one shuffle
++    never changes the outcome of another.
++    """
++    rng = game_streams(cfg.base_seed, game_idx)
++    n = cfg.num_players
++
++    role_names = list(cfg.roles)
++    role_perm = rng["roles"].permutation(n)
++    if cfg.shuffle_roles:
++        role_names = [role_names[i] for i in role_perm]
++
++    seat_perm = rng["seats"].permutation(n)
++    participants = [int(i) for i in seat_perm] if cfg.shuffle_seats else list(range(n))
++
++    leader = int(rng["leader"].integers(0, n))
++    if not cfg.random_leader:
++        leader = 0
++
++    agent_seeds = [int(s) for s in rng["agents"].integers(0, 2**31 - 1, size=n)]
++
++    return GameSetup(
++        game_idx=game_idx,
++        seed=[cfg.base_seed, game_idx],
++        seat_specs=[cfg.seats[p] for p in participants],
++        seat_participants=participants,
++        role_names=role_names,
++        quest_leader=leader,
++        agent_seeds=agent_seeds,
++    )
+diff --git a/src/arena/session.py b/src/arena/session.py
+new file mode 100644
+index 0000000..6a2b764
+--- /dev/null
++++ b/src/arena/session.py
+@@ -0,0 +1,74 @@
++from typing import Callable, List, Optional
++
++from src.server.task import Session
++from src.typings import AgentOutput, ChatHistoryItem
++
++from .backends import Completion, Transcript
++from .retry import retry_async
++
++
++def brevity_instruction(max_words: Optional[int]) -> str:
++    if not max_words:
++        return ""
++    return (f"Keep every reply under {max_words} words. In discussion, speak one or two short sentences. "
++            "When asked for a decision, give it in the requested answer format with at most one short "
++            "sentence of reasoning. Do not think step by step at length.")
++
++
++class ArenaSession(Session):
++    r"""Shared session for all seats in one game.
++
++    `MultiAgentProxy` swaps `self.history` per seat; this class routes each `action()` to the
++    current seat's backend and returns an `AgentOutput`, which is what `AvalonSessionWrapper` expects.
++    """
++
++    def __init__(
++        self,
++        backends: List,
++        max_retries: int,
++        backoff_base_s: float,
++        backoff_max_s: float,
++        on_event: Optional[Callable[..., None]] = None,
++        reply_max_words: Optional[int] = None,
++    ):
++        super().__init__()
++        self.backends = backends
++        self.proxy = None  # set after the proxy is built
++        self.max_retries = max_retries
++        self.backoff_base_s = backoff_base_s
++        self.backoff_max_s = backoff_max_s
++        self.on_event = on_event or (lambda type, **data: None)
++        self.brevity = brevity_instruction(reply_max_words)
++
++    async def call(self, backend, seat: int, system: str, transcript: Transcript) -> Completion:
++        r"""One completion with backoff on transient failures (also used by the search planner)."""
++        def on_retry(attempt, exc, delay):
++            self.on_event("retry", scope="llm_call", seat=seat, attempt=attempt,
++                          error=f"{type(exc).__name__}: {exc}", delay_s=delay)
++
++        if self.brevity:
++            system = f"{system}\n\n{self.brevity}" if system else self.brevity
++        return await retry_async(
++            lambda: backend.complete(system, transcript),
++            max_retries=self.max_retries,
++            base=self.backoff_base_s,
++            cap=self.backoff_max_s,
++            on_retry=on_retry,
++        )
++
++    async def action(self, *injection) -> AgentOutput:
++        self.inject(list(injection))
++        seat = self.proxy.current_agent if self.proxy is not None else 0
++        messages = self.filter_messages(self.history)
++        # the first message is the game instruction; it becomes the system prompt
++        system = messages[0].content
++        transcript = [(m.role, m.content) for m in messages[1:]]
++        if not transcript:
++            transcript = [("user", system)]
++
++        c = await self.call(self.backends[seat], seat, system, transcript)
++        self.on_event("llm_call", seat=seat, source="seat", prompt=transcript[-1][1], response=c.text,
++                      model=c.model, input_tokens=c.input_tokens, output_tokens=c.output_tokens,
++                      cost_usd=c.cost_usd, latency_s=c.duration_s)
++        self.history.append(ChatHistoryItem(role="agent", content=c.text))
++        return AgentOutput(content=c.text)
+diff --git a/src/server/tasks/avalon/agents/search_agent.py b/src/server/tasks/avalon/agents/search_agent.py
+index c8e9724..4167750 100644
+--- a/src/server/tasks/avalon/agents/search_agent.py
++++ b/src/server/tasks/avalon/agents/search_agent.py
+@@ -1,3 +1,6 @@
++import asyncio
++import threading
++
+ from .llm_with_discussion import LLMAgentWithDiscussion # this part is not correct yet
+ from ..engine import AvalonBasicConfig
+ from ..wrapper import AvalonSessionWrapper, Session
+@@ -18,6 +21,16 @@ from src.utils import ColorMessage
+ from strategist.Avalon.baseline_models_Avalon import *
+ from strategist.searchlight.gameplay.simulators import DialogueGameSimulator
+ 
++# The planner's search is CPU-bound Python; letting several planners run in parallel threads only
++# thrashes the GIL (measured ~4x slower than running them one at a time), so they take turns.
++_PLANNER_LOCK = threading.Lock()
++
++
++def _run_planner(fn, *args):
++    with _PLANNER_LOCK:
++        return fn(*args)
++
++
+ class SearchlightLLMAgentWithDiscussion(LLMAgentWithDiscussion):
+     def __init__(self, name: str, num_players: int, id: int, role: int, role_name: str, config:AvalonBasicConfig, session: AvalonSessionWrapper=None, side=None, seed=None, func_str=None, **kwargs):
+         # we want to keep track of the current game state here somehow. this should include both the current action history and dialogue history (or summary of dialogue history)
+@@ -135,12 +148,13 @@ class SearchlightLLMAgentWithDiscussion(LLMAgentWithDiscussion):
+         # information_prior = AvalonInformationPrior(config=avalon_config, belief_p_is_merlin=np.ones(avalon_config.num_players)/avalon_config.num_players, belief_p_is_good=np.ones(avalon_config.num_players)/avalon_config.num_players)
+ 
+         # create inputs to AvalonActionPlannerAgent
+-        llm_model = GPT35Multi()
++        # callers (e.g. src/arena) may inject the planner's LLM; AgentBench keeps the OpenAI default
++        llm_model = getattr(self, "planner_llm", None) or GPT35Multi()
+         value_heuristic = AvalonLLMFunctionalValueHeuristic(func=self.func_str)
+         # dialogue_guide = dialogue_guides[0]
+ 
+         # create 1 human agent, and fill the rest with random agents
+-        rng = np.random.default_rng(12)
++        rng = np.random.default_rng(self.seed)
+         # self.action_planner = BaselineAvalonActionPlannerAgent(
+         #     config=self.config,
+         #     llm_model=GPT35Multi(),
+@@ -155,8 +169,8 @@ class SearchlightLLMAgentWithDiscussion(LLMAgentWithDiscussion):
+             llm_model=llm_model,
+             role_to_dialogue_guide=role_to_dialogue_guide,
+             value_heuristic=value_heuristic,
+-            num_rollout=100,
+-            node_budget=100,
++            num_rollout=getattr(self, "num_rollout", 100),
++            node_budget=getattr(self, "node_budget", 100),
+             rng=rng
+         )
+         # self.action_planner = AvalonActionPlannerAgent(
+@@ -178,6 +192,10 @@ class SearchlightLLMAgentWithDiscussion(LLMAgentWithDiscussion):
+         """
+         Team discussion
+         """
++        # the planner is synchronous (search + LLM calls), so keep it off the event loop
++        return await asyncio.to_thread(_run_planner, self._team_discussion, env, dialogue_history)
++
++    def _team_discussion(self, env, dialogue_history):
+         # history = kwargs.pop("history", "")
+         # self.dialogue_discriminator.update_beliefs(history=history)
+         # action = self.get_action_intent(env)
+@@ -194,11 +212,12 @@ class SearchlightLLMAgentWithDiscussion(LLMAgentWithDiscussion):
+         #     quest_results=state.quest_results,
+         # )
+         state = self.convert_to_avalon_state(env)
+-        actor, legal_actions = self.action_planner.actor_action_enumerator.enumerate(state)
+-        information_set = self.action_planner.information_function.get_information_set(state, actor)
+-        known_sides, self_role = state.get_private_information(actor)
++        # every player speaks during discussion, but only the leader is acting in this phase:
++        # build the information set from this agent's own seat, not the acting player's
++        information_set = self.action_planner.information_function.get_information_set(state, self.id)
++        known_sides, self_role = state.get_private_information(self.id)
+         state.self_role = self_role
+-        state.self_player = actor
++        state.self_player = self.id
+         state.known_sides = known_sides
+         # information_set = self.action_planner.information_function.get_information_set(state, actor)
+         new_dialogue = slice_out_new_dialogue(dialogue_history.get_list(), player=self.id)
+@@ -210,7 +229,7 @@ class SearchlightLLMAgentWithDiscussion(LLMAgentWithDiscussion):
+         """
+         Propose Team
+         """
+-        action = list(self.get_action_intent(env))
++        action = list(await asyncio.to_thread(_run_planner, self.get_action_intent, env))
+         print(ColorMessage.blue("Action:") + " ", f"Propose team {action}")
+         return action
+     
+@@ -222,7 +241,7 @@ class SearchlightLLMAgentWithDiscussion(LLMAgentWithDiscussion):
+             0: "Reject the team",
+             1: "Approve the team",
+         }
+-        action = self.get_action_intent(env)
++        action = await asyncio.to_thread(_run_planner, self.get_action_intent, env)
+         print(ColorMessage.blue("Action:") + " " + verbal_team_act[action])
+         return action
+     
+@@ -234,7 +253,7 @@ class SearchlightLLMAgentWithDiscussion(LLMAgentWithDiscussion):
+             0: "Fail the mission",
+             1: "Pass the mission",
+         }
+-        action = self.get_action_intent(env)
++        action = await asyncio.to_thread(_run_planner, self.get_action_intent, env)
+         print(ColorMessage.blue("Action:") + " " + verbal_team_act[action])
+         return action
+     
+@@ -242,7 +261,7 @@ class SearchlightLLMAgentWithDiscussion(LLMAgentWithDiscussion):
+         """
+         Assassinate
+         """
+-        action = self.get_action_intent(env)
++        action = await asyncio.to_thread(_run_planner, self.get_action_intent, env)
+         print(ColorMessage.blue("Action:") + " ", f"Assassinate Player {action}")
+         return action
+     
+@@ -291,11 +310,11 @@ class SearchlightLLMAgentWithDiscussion(LLMAgentWithDiscussion):
+         # while actor != self.id:
+         print("Check actor action enumerator")
+         actor, legal_actions = self.action_planner.actor_action_enumerator.enumerate(state)
+-        if actor != 0:
+-            print("Wrong Actor")
++        # the planner orders itself first among simultaneous actors, so it must be the actor here
++        if actor != self.id:
++            raise RuntimeError(f"search agent {self.id} asked to act, but the planner chose actor {actor}")
+         print("Check actor action enumerator done")
+-        # FIXME: should I use the get_information_set here? Am I passing the correct actor?
+-        information_set = self.action_planner.information_function.get_information_set(state, actor)
++        information_set = self.action_planner.information_function.get_information_set(state, self.id)
+         # information_set = self.action_planner.information_function.get_information_set(state, actor)
+         action = self.action_planner.act(information_set, legal_actions)
+         # action = self.action_planner.act(state, legal_actions)
+diff --git a/src/server/tasks/avalon/engine.py b/src/server/tasks/avalon/engine.py
+index c13dd88..8eb210d 100644
+--- a/src/server/tasks/avalon/engine.py
++++ b/src/server/tasks/avalon/engine.py
+@@ -132,7 +132,8 @@ class AvalonGameEnvironment():
+     def from_presets(cls, presets: Dict) -> 'AvalonGameEnvironment':
+         r"""Instantiate the environment with game presets"""
+         config = AvalonBasicConfig.from_presets(presets)
+-        cls.config = config
++        # preset_flag is True, so the constructor does not reset/assign roles
++        env = cls(config)
+ 
+         print(presets)
+ 
+@@ -146,25 +147,25 @@ class AvalonGameEnvironment():
+             if role in ["Morgana", "Mordred", "Oberon", "Minion", "Assassin"]:
+                 is_good[idx] = False
+ 
+-        cls.roles = np.array(role_ids)
+-        cls.role_names = role_names
+-        cls.is_good = np.array(is_good)
+-        cls.quest_leader = quest_leader
+-
+-        cls.round = 0
+-        cls.quest = 0
+-        cls.phase = 0
+-        cls.turn = 0
+-        cls.done = False
+-        cls.good_victory = False
+-
+-        cls.quest_team = []
+-        cls.team_votes = []
+-        cls.quest_votes = []
+-        cls.quest_results = []
+-        
+-
+-        return cls(config)
++        # set game state on the instance (not the class) so concurrent games don't share state
++        env.roles = np.array(role_ids)
++        env.role_names = role_names
++        env.is_good = np.array(is_good)
++        env.quest_leader = quest_leader
++
++        env.round = 0
++        env.quest = 0
++        env.phase = 0
++        env.turn = 0
++        env.done = False
++        env.good_victory = False
++
++        env.quest_team = []
++        env.team_votes = []
++        env.quest_votes = []
++        env.quest_results = []
++
++        return env
+ 
+     def reset(self):
+         '''
+diff --git a/strategist/Avalon/baseline_models_Avalon.py b/strategist/Avalon/baseline_models_Avalon.py
+index 82eb6af..1f44ffc 100644
+--- a/strategist/Avalon/baseline_models_Avalon.py
++++ b/strategist/Avalon/baseline_models_Avalon.py
+@@ -543,9 +543,9 @@ class AvalonActorActionEnumerator(ActorActionEnumerator):
+         else:
+             # actor should be the actor in state.acting_players that is first in the default_player_order
+             actor = None
+-            for acting_player in state.acting_players:
+-                if acting_player in self.default_player_order:
+-                    actor = acting_player
++            for player in self.default_player_order:
++                if player in state.acting_players:
++                    actor = player
+                     break
+             if actor is None:
+                 raise ValueError('No actor found')
+diff --git a/strategist/searchlightimprove/llm_utils/llm_api_models.py b/strategist/searchlightimprove/llm_utils/llm_api_models.py
+index 01090f4..947886f 100644
+--- a/strategist/searchlightimprove/llm_utils/llm_api_models.py
++++ b/strategist/searchlightimprove/llm_utils/llm_api_models.py
+@@ -1,10 +1,6 @@
+-from langchain_openai import ChatOpenAI
+-from langchain.schema import HumanMessage, SystemMessage
+-from langchain_community.chat_models import ChatAnthropic
+ import warnings
+ import os
+ from abc import ABC, abstractmethod
+-import tiktoken
+ from strategist.searchlight.utils import AbstractLogged
+ 
+ class LLMModel(AbstractLogged):
+@@ -64,6 +60,8 @@ class LLMModel(AbstractLogged):
+ class GPT35Multi(LLMModel):
+     def __init__(self, temperature: float=0.7, num_responses=1, api_key=None, model="gpt-3.5-turbo", max_expense: float=40):
+         super().__init__()
++        import tiktoken
++        from langchain_openai import ChatOpenAI
+         
+         if api_key is not None:
+             self.key = api_key
+@@ -109,9 +107,11 @@ class GPT35Multi(LLMModel):
+         if num_responses == -1:
+             num_responses = self.num_responses
+         
++        from langchain_openai import ChatOpenAI
+         # Initialize the model with the desired temperature and number of responses
+         self.model = ChatOpenAI(temperature=temperature, openai_api_key=self.key, n=num_responses)
+ 
++        from langchain.schema import HumanMessage
+         # Wrap the input prompt in a list of HumanMessage objects as before
+         input_prompt = [HumanMessage(content=input_prompt)]
+         
+@@ -135,6 +135,7 @@ class GPT35Multi(LLMModel):
+             temp_temperature = self.model.temperature
+             self.model.temperature = temperature
+ 
++        from langchain.schema import HumanMessage
+         # Wrap the input prompt in a list of HumanMessage objects as before
+         input_prompt = [HumanMessage(content=input_prompt)]
+         
+@@ -159,6 +160,8 @@ class GPT35Multi(LLMModel):
+ class ClaudeMulti(LLMModel):
+     def __init__(self, temperature: float=0.7, num_responses=1, api_key=None, model="claude-2", max_expense: float=20):
+         super().__init__()
++        import tiktoken
++        from langchain_community.chat_models import ChatAnthropic
+         
+         if api_key is not None:
+             self.key = api_key
+@@ -191,6 +194,7 @@ class ClaudeMulti(LLMModel):
+             temp_temperature = self.model.temperature
+             self.model.temperature = temperature
+ 
++        from langchain.schema import HumanMessage
+         # Wrap the input prompt in a list of HumanMessage objects as before
+         input_prompt = [HumanMessage(content=input_prompt)]
+         
+diff --git a/tests/__init__.py b/tests/__init__.py
+new file mode 100644
+index 0000000..e69de29
+diff --git a/tests/arena/__init__.py b/tests/arena/__init__.py
+new file mode 100644
+index 0000000..e69de29
+diff --git a/tests/arena/conftest.py b/tests/arena/conftest.py
+new file mode 100644
+index 0000000..5c7c50e
+--- /dev/null
++++ b/tests/arena/conftest.py
+@@ -0,0 +1,22 @@
++import pytest
++
++from src.arena.config import ArenaConfig
++
++
++def make_cfg(**overrides) -> ArenaConfig:
++    base = dict(
++        seats=[{"agent": "search"}] + [{"agent": "llm"} for _ in range(4)],
++        num_games=6,
++        base_seed=7,
++        concurrency=3,
++        max_game_retries=2,
++        backoff_base_s=0.0,
++        backoff_max_s=0.0,
++    )
++    base.update(overrides)
++    return ArenaConfig.parse_obj(base)
++
++
++@pytest.fixture
++def cfg():
++    return make_cfg()
+diff --git a/tests/arena/test_api_backend.py b/tests/arena/test_api_backend.py
+new file mode 100644
+index 0000000..db2de36
+--- /dev/null
++++ b/tests/arena/test_api_backend.py
+@@ -0,0 +1,158 @@
++import asyncio
++import json
++import threading
++from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
++
++import pytest
++
++pytest.importorskip("anthropic")
++
++from src.arena.backends import (AnthropicBackend, BackendError, FatalBackendError, ModelRefusal,  # noqa: E402
++                                NotLoggedIn, TransientBackendError, UsageLimitReached)
++from src.arena.runner import _classify  # noqa: E402
++
++from .conftest import make_cfg  # noqa: E402
++
++# the stub API answers by model name; anything else is a normal reply
++ERRORS = {
++    "err-401": (401, "authentication_error"), "err-402": (402, "billing_error"),
++    "err-404": (404, "not_found_error"), "err-429": (429, "rate_limit_error"),
++    "err-529": (529, "overloaded_error"), "err-400": (400, "invalid_request_error"),
++}
++
++
++class StubAPI(BaseHTTPRequestHandler):
++    requests = []
++
++    def log_message(self, *args):
++        pass
++
++    def do_POST(self):
++        body = json.loads(self.rfile.read(int(self.headers["content-length"])))
++        StubAPI.requests.append({"path": self.path, "headers": dict(self.headers), "body": body})
++        model = body["model"]
++        if model in ERRORS:
++            status, kind = ERRORS[model]
++            payload = {"type": "error", "error": {"type": kind, "message": f"stub {kind}"}}
++        else:
++            status = 200
++            refusal = model == "claude-refuses"
++            payload = {
++                "id": "msg_stub", "type": "message", "role": "assistant", "model": model,
++                "content": [] if refusal else [{"type": "thinking", "thinking": "", "signature": "sig"},
++                                               {"type": "text", "text": "Answer: Yes"}],
++                "stop_reason": "refusal" if refusal else "end_turn", "stop_sequence": None,
++                "stop_details": {"type": "refusal", "category": "cyber", "explanation": None} if refusal else None,
++                "usage": {"input_tokens": 10, "output_tokens": 4, "cache_creation_input_tokens": 1000,
++                          "cache_read_input_tokens": 2000},
++            }
++        data = json.dumps(payload).encode()
++        self.send_response(status)
++        self.send_header("content-type", "application/json")
++        self.send_header("content-length", str(len(data)))
++        self.end_headers()
++        self.wfile.write(data)
++
++
++@pytest.fixture
++def api(monkeypatch):
++    server = ThreadingHTTPServer(("127.0.0.1", 0), StubAPI)
++    threading.Thread(target=server.serve_forever, daemon=True).start()
++    StubAPI.requests = []
++    monkeypatch.setenv("ANTHROPIC_BASE_URL", f"http://127.0.0.1:{server.server_port}")
++    monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-ant-test")
++    yield StubAPI.requests
++    server.shutdown()
++
++
++def complete(model, effort="medium", transcript=None):
++    b = AnthropicBackend(model, make_cfg(), effort)
++    return asyncio.run(b.complete("You are Player 2.", transcript or [("user", "Vote?")]))
++
++
++def test_request_shape_and_parsing(api):
++    c = complete("opus", transcript=[("agent", "earlier reply"), ("user", "Vote?")])
++    assert c.text == "Answer: Yes" and c.model == "claude-opus-5-5"
++    assert (c.input_tokens, c.output_tokens) == (3010, 4)
++    assert c.cost_usd == pytest.approx((10 * 4 + 1000 * 5 + 2000 * 0.4 + 4 * 20) / 1e6)
++    req = api[0]
++    body, headers = req["body"], {k.lower(): v for k, v in req["headers"].items()}
++    assert req["path"].startswith("/v1/messages")
++    assert body["model"] == "claude-opus-5-5" and body["system"] == "You are Player 2."
++    assert body["output_config"] == {"effort": "medium"} and body["cache_control"] == {"type": "ephemeral"}
++    assert body["fallbacks"] == "default" and "server-side-fallback-2026-07-01" in headers["anthropic-beta"]
++    assert not {"temperature", "top_p", "top_k", "thinking"} & set(body)
++    # history starting on our own reply gets a user turn first; last turn is the user's (no prefill)
++    assert [m["role"] for m in body["messages"]] == ["user", "assistant", "user"]
++    # SDK 2.x sends the key as a bearer token and defaults to API version 2026-10-21
++    assert headers["authorization"] == "Bearer sk-ant-test"
++    assert headers["anthropic-version"] == "2026-10-21"
++
++
++def test_haiku_gets_no_fallback_and_effort_can_be_omitted(api):
++    complete("haiku", effort=None)
++    body = api[0]["body"]
++    assert body["model"] == "claude-haiku-5-5"
++    assert "fallbacks" not in body and "output_config" not in body
++
++
++def test_refusal_is_a_terminal_model_outcome(api):
++    with pytest.raises(ModelRefusal, match="cyber") as ei:
++        complete("claude-refuses")
++    assert _classify(ei.value) == "refusal"
++
++
++@pytest.mark.parametrize("model,exc", [
++    ("err-401", NotLoggedIn), ("err-402", UsageLimitReached), ("err-404", FatalBackendError),
++    ("err-429", TransientBackendError), ("err-529", TransientBackendError), ("err-400", BackendError),
++])
++def test_errors_are_classified(api, model, exc):
++    with pytest.raises(exc) as ei:
++        complete(model)
++    assert type(ei.value) is exc or model == "err-400"
++    assert len(api) == 1  # the SDK itself does not retry; ArenaSession owns retries
++
++
++def test_missing_credentials_is_fatal(monkeypatch, api):
++    monkeypatch.delenv("ANTHROPIC_API_KEY")
++    monkeypatch.delenv("ANTHROPIC_AUTH_TOKEN", raising=False)
++    monkeypatch.setenv("ANTHROPIC_CONFIG_DIR", "/nonexistent-arena-test")  # no `ant auth login` profile
++    with pytest.raises(FatalBackendError):
++        complete("opus")
++
++
++def test_full_game_through_api_path(api, tmp_path, monkeypatch):
++    from src.arena.backends import FakeBackend
++    from src.arena.runner import game_path, run
++    from src.arena.events import read_events
++
++    fake = FakeBackend(seed=0)
++    original = StubAPI.do_POST
++
++    def scripted(self):
++        # answer like the fake model, but through the real SDK request/response path
++        length = int(self.headers["content-length"])
++        body = json.loads(self.rfile.read(length))
++        StubAPI.requests.append({"path": self.path, "headers": dict(self.headers), "body": body})
++        payload = {"id": "m", "type": "message", "role": "assistant", "model": body["model"],
++                   "content": [{"type": "text", "text": fake.respond(body["messages"][-1]["content"])}],
++                   "stop_reason": "end_turn", "stop_sequence": None,
++                   "usage": {"input_tokens": 5, "output_tokens": 5}}
++        data = json.dumps(payload).encode()
++        self.send_response(200)
++        self.send_header("content-type", "application/json")
++        self.send_header("content-length", str(len(data)))
++        self.end_headers()
++        self.wfile.write(data)
++
++    monkeypatch.setattr(StubAPI, "do_POST", scripted)
++    seats = [{"agent": "search", "provider": "anthropic", "model": "haiku",
++              "planner_num_rollout": 3, "planner_node_budget": 3}] + \
++            [{"agent": "llm", "provider": "anthropic"} for _ in range(4)]
++    cfg = make_cfg(seats=seats, num_games=1, concurrency=1)
++    ends = asyncio.run(run(cfg, str(tmp_path / "run"), log_fn=lambda *_: None))
++    assert ends[0]["data"]["status"] == "completed"
++    events = read_events(game_path(str(tmp_path / "run"), 0))
++    sources = {(e["data"]["source"], e["data"]["model"]) for e in events if e["type"] == "llm_call"}
++    assert ("seat", "claude-opus-5-5") in sources and ("planner", "claude-haiku-5-5") in sources
++    assert all(not {"temperature", "top_p", "top_k"} & set(r["body"]) for r in api)
+diff --git a/tests/arena/test_cli_backend.py b/tests/arena/test_cli_backend.py
+new file mode 100644
+index 0000000..342a705
+--- /dev/null
++++ b/tests/arena/test_cli_backend.py
+@@ -0,0 +1,163 @@
++import asyncio
++import json
++import os
++import stat
++import sys
++import textwrap
++import time
++
++import pytest
++
++from src.arena.backends import (BackendError, ClaudeCLIBackend, FatalBackendError, NotLoggedIn,
++                                TransientBackendError, UsageLimitReached, classify_cli_failure)
++from src.arena.retry import is_transient
++
++from .conftest import make_cfg
++
++pytestmark = pytest.mark.skipif(sys.platform == "win32", reason="stub CLI is a POSIX shebang script")
++
++# Behaves like `claude -p --output-format json`; the --model value picks the scenario.
++STUB = textwrap.dedent('''\
++    #!{python}
++    import json, os, sys, time
++    args = sys.argv[1:]
++    model = args[args.index("--model") + 1]
++    system = open(args[args.index("--system-prompt-file") + 1], encoding="utf-8").read()
++    prompt = sys.stdin.read()
++    log = os.environ.get("STUB_LOG")
++    if log:
++        with open(log, "a") as f:
++            f.write(json.dumps({{"start": time.time(), "cwd": os.getcwd(), "args": args}}) + "\\n")
++    def out(code, **d):
++        print(json.dumps(d)); sys.exit(code)
++    if model == "hang":
++        time.sleep(30)
++    if model == "slow":
++        time.sleep(0.3)
++    if model == "garbage":
++        print("not json"); sys.exit(3)
++    if model == "usage":
++        out(1, type="result", is_error=True, api_error_status=429, result="Claude usage limit reached. Your limit will reset at 5pm.")
++    if model == "auth":
++        out(1, type="result", is_error=True, api_error_status=401, result="Not logged in · Please run /login")
++    if model == "nomodel":
++        out(1, type="result", is_error=True, api_error_status=404, result="There's an issue with the selected model (nomodel).")
++    if model == "overloaded":
++        out(1, type="result", is_error=True, api_error_status=529, result="API Error: Overloaded")
++    out(0, type="result", is_error=False, result="echo:" + prompt.splitlines()[-1] + "|sys:" + str("Answer tersely" in system),
++        total_cost_usd=0.001, usage={{"input_tokens": 3, "cache_creation_input_tokens": 600, "cache_read_input_tokens": 0, "output_tokens": 5}},
++        modelUsage={{"claude-stub-1": {{}}}})
++''')
++
++
++@pytest.fixture
++def stub(tmp_path, monkeypatch):
++    path = tmp_path / "claude"
++    path.write_text(STUB.format(python=sys.executable))
++    path.chmod(path.stat().st_mode | stat.S_IEXEC)
++    log = tmp_path / "calls.jsonl"
++    monkeypatch.setenv("STUB_LOG", str(log))
++    return str(path), log
++
++
++def backend(stub_path, model, **cfg):
++    return ClaudeCLIBackend(model, make_cfg(claude_bin=stub_path, **cfg))
++
++
++def test_success_parses_result_and_usage(stub):
++    path, log = stub
++    b = backend(path, "ok")
++    c = asyncio.run(b.complete("Answer tersely.", [("user", "intro"), ("agent", "me"), ("user", "Reply OK")]))
++    assert c.text == "echo:Reply OK|sys:True"
++    assert (c.input_tokens, c.output_tokens, c.cost_usd, c.model) == (603, 5, 0.001, "claude-stub-1")
++    call = json.loads(log.read_text().splitlines()[0])
++    assert "--strict-mcp-config" in call["args"] and call["args"][call["args"].index("--tools") + 1] == ""
++    assert not os.listdir(call["cwd"])  # empty sandbox dir; the system prompt file was cleaned up
++    b.close()
++    assert not os.path.exists(call["cwd"])
++
++
++@pytest.mark.parametrize("model,exc", [
++    ("usage", UsageLimitReached),
++    ("auth", NotLoggedIn),
++    ("nomodel", FatalBackendError),
++    ("overloaded", TransientBackendError),
++    ("garbage", BackendError),
++])
++def test_failures_are_classified(stub, model, exc):
++    b = backend(stub[0], model)
++    with pytest.raises(exc):
++        asyncio.run(b.complete("", [("user", "hi")]))
++    b.close()
++
++
++def test_timeout_kills_process_and_is_transient(stub):
++    b = backend(stub[0], "hang", llm_timeout_s=0.5)
++    start = time.monotonic()
++    with pytest.raises(TransientBackendError) as ei:
++        asyncio.run(b.complete("", [("user", "hi")]))
++    assert time.monotonic() - start < 10
++    assert is_transient(ei.value)
++    b.close()
++
++
++def test_parallel_cap(stub):
++    path, log = stub
++
++    async def main():
++        bs = [backend(path, "slow", cli_max_parallel=2) for _ in range(4)]
++        await asyncio.gather(*(b.complete("", [("user", "hi")]) for b in bs))
++        for b in bs:
++            b.close()
++
++    asyncio.run(main())
++    starts = sorted(json.loads(l)["start"] for l in log.read_text().splitlines())
++    assert len(starts) == 4
++    assert starts[2] - starts[0] > 0.25  # the third process waited for a slot
++
++
++def test_missing_cli_is_fatal(monkeypatch, tmp_path):
++    monkeypatch.setenv("PATH", str(tmp_path))
++    with pytest.raises(FatalBackendError, match="not found"):
++        ClaudeCLIBackend("haiku", make_cfg(claude_bin=None))
++
++
++def test_classify_messages_without_status():
++    assert isinstance(classify_cli_failure(None, "Claude AI usage limit reached|1760000000"), UsageLimitReached)
++    assert isinstance(classify_cli_failure(None, "Invalid API key · Please run /login"), NotLoggedIn)
++    assert type(classify_cli_failure(None, "something odd")) is BackendError
++
++
++def test_effort_flag_passed_only_when_set(stub):
++    path, log = stub
++    for effort in (None, "low"):
++        b = ClaudeCLIBackend("ok", make_cfg(claude_bin=path), effort)
++        asyncio.run(b.complete("", [("user", "hi")]))
++        b.close()
++    first, second = [json.loads(l)["args"] for l in log.read_text().splitlines()]
++    assert "--effort" not in first
++    assert second[second.index("--effort") + 1] == "low"
++
++
++def test_reply_max_words_reaches_system_prompt():
++    from src.arena.session import ArenaSession
++
++    seen = []
++
++    class Recorder:
++        async def complete(self, system, transcript):
++            seen.append(system)
++            from src.arena.backends import Completion
++            return Completion(text="ok")
++
++    for words in (None, 30):
++        s = ArenaSession([Recorder()], max_retries=0, backoff_base_s=0, backoff_max_s=0, reply_max_words=words)
++        asyncio.run(s.call(s.backends[0], 0, "rules", [("user", "go")]))
++    assert seen[0] == "rules"
++    assert seen[1].startswith("rules\n\n") and "under 30 words" in seen[1]
++
++
++def test_echoed_transcript_label_is_stripped():
++    from src.arena.backends import strip_echoed_label
++    assert strip_echoed_label("[You] Let's wait.") == "Let's wait."
++    assert strip_echoed_label("I said [You] earlier") == "I said [You] earlier"
+diff --git a/tests/arena/test_engine_presets.py b/tests/arena/test_engine_presets.py
+new file mode 100644
+index 0000000..7d0fcd9
+--- /dev/null
++++ b/tests/arena/test_engine_presets.py
+@@ -0,0 +1,23 @@
++import importlib.util
++import os
++
++# load the engine module directly: importing src.server.tasks.avalon pulls in the full agent stack
++ENGINE_PATH = os.path.join(os.path.dirname(__file__), "..", "..", "src", "server", "tasks", "avalon", "engine.py")
++spec = importlib.util.spec_from_file_location("avalon_engine_under_test", ENGINE_PATH)
++engine = importlib.util.module_from_spec(spec)
++spec.loader.exec_module(engine)
++
++
++def test_from_presets_does_not_share_state():
++    a = engine.AvalonGameEnvironment.from_presets(
++        {"num_players": 5, "quest_leader": 0, "role_names": ["Merlin", "Servant", "Servant", "Assassin", "Minion"]})
++    b = engine.AvalonGameEnvironment.from_presets(
++        {"num_players": 5, "quest_leader": 3, "role_names": ["Assassin", "Minion", "Merlin", "Servant", "Servant"]})
++    assert a.get_role(0)[1] == "Merlin" and b.get_role(0)[1] == "Assassin"
++    assert a.get_quest_leader() == 0 and b.get_quest_leader() == 3
++    assert a.get_assassin() == 3 and b.get_assassin() == 0
++    assert "roles" not in vars(engine.AvalonGameEnvironment)
++
++    a.choose_quest_team(frozenset({0, 1}), leader=0)
++    assert a.get_phase()[0] == 1 and b.get_phase()[0] == 0
++    assert a.quest_results is not b.quest_results
+diff --git a/tests/arena/test_events.py b/tests/arena/test_events.py
+new file mode 100644
+index 0000000..38bc2e0
+--- /dev/null
++++ b/tests/arena/test_events.py
+@@ -0,0 +1,36 @@
++import json
++
++import numpy as np
++import pytest
++
++from src.arena.events import EventLog, read_events
++
++
++def test_round_trip(tmp_path):
++    path = str(tmp_path / "g" / "game.jsonl")
++    with EventLog(path, run_id="r", game_idx=4, attempt=1) as log:
++        log.emit("game_start", seed=[0, 4])
++        log.emit("team_proposed", team=frozenset({1, 2}), leader=np.int64(3), ok=np.bool_(True))
++    events = read_events(path)
++    assert [e["type"] for e in events] == ["game_start", "team_proposed"]
++    assert [e["seq"] for e in events] == [0, 1]
++    assert all(e["run_id"] == "r" and e["game_idx"] == 4 and e["attempt"] == 1 for e in events)
++    assert sorted(events[1]["data"]["team"]) == [1, 2]
++    assert events[1]["data"]["leader"] == 3 and events[1]["data"]["ok"] is True
++
++
++def test_truncated_last_line_is_ignored(tmp_path):
++    path = str(tmp_path / "game.jsonl")
++    with EventLog(path, run_id="r", game_idx=0) as log:
++        log.emit("a")
++        log.emit("b")
++    with open(path, "a") as f:
++        f.write('{"type": "c", "da')
++    assert [e["type"] for e in read_events(path)] == ["a", "b"]
++
++
++def test_corrupt_middle_line_raises(tmp_path):
++    path = tmp_path / "game.jsonl"
++    path.write_text('{"type": "a"}\n{bad\n' + json.dumps({"type": "b"}) + "\n")
++    with pytest.raises(json.JSONDecodeError):
++        read_events(str(path))
+diff --git a/tests/arena/test_game_fake.py b/tests/arena/test_game_fake.py
+new file mode 100644
+index 0000000..bf6c3c2
+--- /dev/null
++++ b/tests/arena/test_game_fake.py
+@@ -0,0 +1,54 @@
++import asyncio
++import json
++import os
++from collections import Counter
++
++import pytest
++
++from src.arena.__main__ import summarize
++from src.arena.events import read_events
++from src.arena.runner import game_path, run
++
++from .conftest import make_cfg
++
++# plays real games (engine, agents, proxy, search planner) against the offline fake backend
++pytest.importorskip("networkx")
++
++
++def fake_cfg(**overrides):
++    # small search budget keeps the CPU-bound planner quick; the default (100) takes ~4s per decision
++    seats = [{"agent": "search", "provider": "fake", "name": "search0", "planner_num_rollout": 5, "planner_node_budget": 5}] + \
++            [{"agent": "llm", "provider": "fake", "name": f"llm{i}"} for i in range(4)]
++    return make_cfg(**{"seats": seats, "num_games": 2, "concurrency": 2, **overrides})
++
++
++def test_full_games_with_fake_backend(tmp_path, capsys):
++    run_dir = str(tmp_path / "run")
++    ends = asyncio.run(run(fake_cfg(), run_dir, log_fn=lambda *_: None))
++    assert [e["data"]["status"] for e in ends] == ["completed", "completed"]
++    for i in range(2):
++        events = read_events(game_path(run_dir, i))
++        types = Counter(e["type"] for e in events)
++        assert events[0]["type"] == "game_start" and events[-1]["type"] == "game_end"
++        assert types["team_proposed"] >= 3 and types["quest_result"] >= 3 and types["beliefs"] == 1
++        sources = Counter(e["data"]["source"] for e in events if e["type"] == "llm_call")
++        assert sources["seat"] > 0 and sources["planner"] > 0  # search planner routed through the backend
++        assert {e["data"]["model"] for e in events if e["type"] == "llm_call"} == {"fake"}
++    summary = summarize(run_dir)
++    assert summary["statuses"] == {"completed": 2}
++    assert summary["usage_by_participant"]["search0"]["calls"] > 0
++
++
++def test_discussion_lines_are_labelled_with_0_based_seats(tmp_path):
++    import re
++    from multi_agent.proxy import MultiAgentProxy
++    from src.server.task import Session
++
++    # broadcast lines are prefixed with the sender's name; ids are 0-based everywhere else
++    assert MultiAgentProxy(Session(), 5).agent_names == [f"Player {i}" for i in range(5)]
++
++    run_dir = str(tmp_path / "run")
++    asyncio.run(run(fake_cfg(num_games=1), run_dir, log_fn=lambda *_: None))
++    labels = [int(n) for e in read_events(game_path(run_dir, 0)) if e["type"] == "llm_call"
++              for n in re.findall(r"Player (\d+) says:", e["data"]["prompt"])]
++    assert labels and set(labels) <= set(range(5)) and 0 in labels
+diff --git a/tests/arena/test_runner.py b/tests/arena/test_runner.py
+new file mode 100644
+index 0000000..f05016d
+--- /dev/null
++++ b/tests/arena/test_runner.py
+@@ -0,0 +1,224 @@
++import asyncio
++import glob
++import json
++import os
++
++import pytest
++
++from src.arena.__main__ import summarize
++from src.arena.events import read_events
++from src.arena.retry import is_transient, retry_async
++from src.arena.runner import game_path, run
++
++from .conftest import make_cfg
++
++
++class AvalonAgentActionException(Exception):
++    pass
++
++
++def fake_result(setup):
++    return {
++        "status": "completed",
++        "winner": "good",
++        "reason": "missions_and_assassin_missed",
++        "quest_results": [True, True, True],
++        "seats": [
++            {"seat": i, "name": s.name, "agent": s.agent, "model": s.model, "role": setup.role_names[i],
++             "side": "evil" if setup.role_names[i] in ("Assassin", "Minion") else "good",
++             "won": setup.role_names[i] not in ("Assassin", "Minion"), "deduction_acc": 0.6}
++            for i, s in enumerate(setup.seat_specs)
++        ],
++    }
++
++
++def make_play_fn(calls, fail=None):
++    r"""fail(game_idx, attempt_count) -> exception to raise, or None to succeed."""
++    async def play(setup, cfg, log):
++        n = calls.setdefault(setup.game_idx, 0)
++        calls[setup.game_idx] = n + 1
++        log.emit("game_start", seed=setup.seed, roles=setup.role_names,
++                 participants=setup.seat_participants, leader=setup.quest_leader)
++        await asyncio.sleep(0)
++        exc = fail(setup.game_idx, n) if fail else None
++        if exc is not None:
++            raise exc
++        return fake_result(setup)
++    return play
++
++
++def results(run_dir):
++    with open(os.path.join(run_dir, "results.jsonl")) as f:
++        return [json.loads(l) for l in f]
++
++
++def test_runs_all_games_and_summarizes(tmp_path):
++    cfg, run_dir, calls = make_cfg(), str(tmp_path / "run"), {}
++    ends = asyncio.run(run(cfg, run_dir, play_fn=make_play_fn(calls), log_fn=lambda *_: None))
++    assert len(ends) == 6 and set(calls) == set(range(6))
++    for i in range(6):
++        events = read_events(game_path(run_dir, i))
++        assert [e["type"] for e in events] == ["game_start", "game_end"]
++    assert len(results(run_dir)) == 6
++    summary = summarize(run_dir)
++    assert summary["statuses"] == {"completed": 6}
++    assert sum(v["games"] for v in summary["by_participant"].values()) == 30
++
++
++def test_transient_failure_is_retried(tmp_path):
++    cfg, run_dir, calls = make_cfg(), str(tmp_path / "run"), {}
++    fail = lambda idx, n: TimeoutError("slow") if idx == 2 and n == 0 else None
++    asyncio.run(run(cfg, run_dir, play_fn=make_play_fn(calls, fail), log_fn=lambda *_: None))
++    assert calls[2] == 2
++    final = read_events(game_path(run_dir, 2))
++    assert final[-1]["data"]["status"] == "completed" and final[0]["attempt"] == 1
++    partials = glob.glob(os.path.join(run_dir, "games", "game_00002.attempt*.partial.jsonl"))
++    assert len(partials) == 1
++    assert [e["type"] for e in read_events(partials[0])] == ["game_start", "error", "retry"]
++
++
++def test_retries_exhausted_marks_failed_and_resume_reruns(tmp_path):
++    cfg, run_dir, calls = make_cfg(max_game_retries=1), str(tmp_path / "run"), {}
++    always = lambda idx, n: RuntimeError("boom") if idx == 1 else None
++    asyncio.run(run(cfg, run_dir, play_fn=make_play_fn(calls, always), log_fn=lambda *_: None))
++    assert calls[1] == 2
++    assert read_events(game_path(run_dir, 1))[-1]["data"]["status"] == "failed"
++
++    calls2 = {}
++    asyncio.run(run(cfg, run_dir, play_fn=make_play_fn(calls2), log_fn=lambda *_: None))
++    assert calls2 == {1: 1}
++    assert read_events(game_path(run_dir, 1))[-1]["data"]["status"] == "completed"
++
++
++def test_model_failure_is_terminal_and_not_retried(tmp_path):
++    cfg, run_dir, calls = make_cfg(), str(tmp_path / "run"), {}
++    fail = lambda idx, n: AvalonAgentActionException("bad team") if idx == 0 else None
++    asyncio.run(run(cfg, run_dir, play_fn=make_play_fn(calls, fail), log_fn=lambda *_: None))
++    assert calls[0] == 1
++    assert read_events(game_path(run_dir, 0))[-1]["data"]["status"] == "agent_invalid_action"
++
++    calls2 = {}
++    asyncio.run(run(cfg, run_dir, play_fn=make_play_fn(calls2), log_fn=lambda *_: None))
++    assert calls2 == {}
++
++
++def test_resume_after_interrupt_replays_same_setup(tmp_path):
++    cfg, run_dir, calls = make_cfg(concurrency=1), str(tmp_path / "run"), {}
++    hang = asyncio.Event()
++
++    async def interrupted(setup, cfg_, log):
++        if setup.game_idx == 3:
++            log.emit("game_start", seed=setup.seed, roles=setup.role_names,
++                     participants=setup.seat_participants, leader=setup.quest_leader)
++            await hang.wait()  # never set: simulates a game in flight at Ctrl-C
++        return await make_play_fn(calls)(setup, cfg_, log)
++
++    async def main():
++        task = asyncio.create_task(run(cfg, run_dir, play_fn=interrupted, log_fn=lambda *_: None))
++        while not os.path.exists(game_path(run_dir, 3)):
++            await asyncio.sleep(0.01)
++        task.cancel()
++        with pytest.raises(asyncio.CancelledError):
++            await task
++
++    asyncio.run(main())
++    first_start = read_events(game_path(run_dir, 3))[0]["data"]
++    assert set(calls) == {0, 1, 2}
++
++    calls2 = {}
++    asyncio.run(run(cfg, run_dir, play_fn=make_play_fn(calls2), log_fn=lambda *_: None))
++    assert calls2 == {3: 1, 4: 1, 5: 1}
++    replay_start = read_events(game_path(run_dir, 3))[0]["data"]
++    assert replay_start == first_start
++    assert os.path.exists(os.path.join(run_dir, "games", "game_00003.attempt0.partial.jsonl"))
++
++
++def test_sharding(tmp_path):
++    cfg, run_dir = make_cfg(), str(tmp_path / "run")
++    c0, c1 = {}, {}
++    asyncio.run(run(cfg, run_dir, shard=(1, 2), play_fn=make_play_fn(c1), log_fn=lambda *_: None))
++    assert set(c1) == {1, 3, 5}
++    asyncio.run(run(cfg, run_dir, shard=(0, 2), play_fn=make_play_fn(c0), log_fn=lambda *_: None))
++    assert set(c0) == {0, 2, 4}
++    assert summarize(run_dir)["statuses"] == {"completed": 6}
++
++
++def test_growing_num_games_on_resume(tmp_path):
++    run_dir = str(tmp_path / "run")
++    asyncio.run(run(make_cfg(num_games=2), run_dir, play_fn=make_play_fn({}), log_fn=lambda *_: None))
++    calls = {}
++    asyncio.run(run(make_cfg(num_games=4), run_dir, play_fn=make_play_fn(calls), log_fn=lambda *_: None))
++    assert set(calls) == {2, 3}
++
++
++def test_config_change_refuses_resume(tmp_path):
++    run_dir = str(tmp_path / "run")
++    asyncio.run(run(make_cfg(num_games=1), run_dir, play_fn=make_play_fn({}), log_fn=lambda *_: None))
++    with pytest.raises(RuntimeError, match="different config"):
++        asyncio.run(run(make_cfg(num_games=1, base_seed=99), run_dir, play_fn=make_play_fn({}),
++                        log_fn=lambda *_: None))
++
++
++def test_retry_async():
++    attempts = []
++
++    async def flaky():
++        attempts.append(1)
++        if len(attempts) < 3:
++            raise ConnectionError("reset")
++        return "ok"
++
++    assert asyncio.run(retry_async(flaky, max_retries=5, base=0, cap=0)) == "ok"
++    assert len(attempts) == 3
++
++    async def broken():
++        raise ValueError("not transient")
++
++    with pytest.raises(ValueError):
++        asyncio.run(retry_async(broken, max_retries=5, base=0, cap=0))
++
++
++def test_is_transient_by_name():
++    class RateLimitError(Exception):
++        pass
++
++    assert is_transient(RateLimitError())
++    assert is_transient(asyncio.TimeoutError())
++    assert not is_transient(KeyError("x"))
++
++
++def test_usage_limit_pauses_run_and_resume_finishes(tmp_path):
++    from src.arena.backends import UsageLimitReached
++
++    cfg, run_dir, calls = make_cfg(concurrency=2), str(tmp_path / "run"), {}
++    fail = lambda idx, n: UsageLimitReached("limit will reset at 5pm") if idx == 2 else None
++    with pytest.raises(UsageLimitReached):
++        asyncio.run(run(cfg, run_dir, play_fn=make_play_fn(calls, fail), log_fn=lambda *_: None))
++    assert calls[2] == 1  # never retried
++    assert os.path.exists(os.path.join(run_dir, "paused.json"))
++    assert read_events(game_path(run_dir, 2))[-1]["type"] == "error"  # no game_end: replayed on resume
++    done_before = {i for i in range(6) if os.path.exists(game_path(run_dir, i))
++                   and read_events(game_path(run_dir, i))[-1]["type"] == "game_end"}
++
++    calls2 = {}
++    asyncio.run(run(cfg, run_dir, play_fn=make_play_fn(calls2), log_fn=lambda *_: None))
++    assert set(calls2) == set(range(6)) - done_before and 2 in calls2
++    assert not os.path.exists(os.path.join(run_dir, "paused.json"))
++    assert summarize(run_dir)["statuses"] == {"completed": 6}
++
++
++def test_fatal_backend_error_aborts_run(tmp_path):
++    from src.arena.backends import NotLoggedIn
++
++    cfg, run_dir, calls = make_cfg(concurrency=1), str(tmp_path / "run"), {}
++    fail = lambda idx, n: NotLoggedIn("run claude and log in") if idx == 0 else None
++    with pytest.raises(NotLoggedIn):
++        asyncio.run(run(cfg, run_dir, play_fn=make_play_fn(calls, fail), log_fn=lambda *_: None))
++    assert calls == {0: 1}
++
++
++def test_manifest_records_code_version(tmp_path):
++    asyncio.run(run(make_cfg(num_games=1), str(tmp_path / "run"), play_fn=make_play_fn({}), log_fn=lambda *_: None))
++    with open(tmp_path / "run" / "manifest.json") as f:
++        manifest = json.load(f)
++    assert "git_sha" in manifest and manifest["git_dirty"] in (True, False, None)
+diff --git a/tests/arena/test_search_pov.py b/tests/arena/test_search_pov.py
+new file mode 100644
+index 0000000..96be876
+--- /dev/null
++++ b/tests/arena/test_search_pov.py
+@@ -0,0 +1,58 @@
++import asyncio
++
++import pytest
++
++pytest.importorskip("networkx")
++
++import src.arena.game as game  # noqa: E402
++from src.arena.events import EventLog  # noqa: E402
++from src.arena.seeding import deal  # noqa: E402
++
++from .conftest import make_cfg  # noqa: E402
++
++
++def search_cfg(base_seed):
++    seats = [{"agent": "search", "provider": "fake", "planner_num_rollout": 3, "planner_node_budget": 3}] + \
++            [{"agent": "llm", "provider": "fake"} for _ in range(4)]
++    return make_cfg(seats=seats, base_seed=base_seed, num_games=1, discussion=True)
++
++
++@pytest.mark.parametrize("base_seed", [7, 11])
++def test_search_planner_uses_its_own_seat(tmp_path, monkeypatch, base_seed):
++    r"""The planner must see the game from its own seat and role, in votes and in discussion.
++
++    Regression: the actor enumerator returned the lowest-numbered acting player, so in votes the
++    planner reasoned as Player 0 (or 1), and discussion used the quest leader's private information.
++    """
++    seen = []
++    base = game.AGENT_FINDER["search"]
++
++    class Recording(base):
++        async def initialize_game_info(self, player_list, env=None, **kwargs):
++            await super().initialize_game_info(player_list, env=env, **kwargs)
++            planner = self.action_planner
++            act, utter = planner.act, planner.produce_utterance
++
++            def recorded_act(information_set, actions):
++                seen.append(("act", self.id, self.role, information_set.self_player, information_set.self_role))
++                return act(information_set, actions)
++
++            def recorded_utterance(state):
++                seen.append(("speak", self.id, self.role, state.self_player, state.self_role))
++                return utter(state=state)
++
++            planner.act, planner.produce_utterance = recorded_act, recorded_utterance
++
++    monkeypatch.setitem(game.AGENT_FINDER, "search", Recording)
++    cfg = search_cfg(base_seed)
++    setup = deal(cfg, 0)
++    with EventLog(str(tmp_path / "g.jsonl"), run_id="t", game_idx=0) as log:
++        end = asyncio.run(game.play_game(setup, cfg, log))
++
++    assert end["status"] == "completed"
++    kinds = {k for k, *_ in seen}
++    assert kinds == {"act", "speak"}
++    for kind, seat, role, pov_seat, pov_role in seen:
++        assert (pov_seat, pov_role) == (seat, role), f"{kind}: planner at seat {seat} reasoned as seat {pov_seat}"
++    # the deal puts the search agent away from seat 0, so the old bug would have shown up
++    assert setup.seat_specs[0].agent != "search"
+diff --git a/tests/arena/test_seeding.py b/tests/arena/test_seeding.py
+new file mode 100644
+index 0000000..a6f65bc
+--- /dev/null
++++ b/tests/arena/test_seeding.py
+@@ -0,0 +1,73 @@
++from collections import Counter
++
++import pytest
++
++from src.arena.config import ArenaConfig
++from src.arena.seeding import deal
++
++from .conftest import make_cfg
++
++
++def test_same_seed_same_deal(cfg):
++    assert deal(cfg, 3) == deal(cfg, 3)
++    assert deal(cfg, 3) == deal(make_cfg(), 3)
++
++
++def test_deals_vary_across_games(cfg):
++    deals = [deal(cfg, i) for i in range(30)]
++    assert len({tuple(d.role_names) for d in deals}) > 1
++    assert len({tuple(d.seat_participants) for d in deals}) > 1
++    assert len({d.quest_leader for d in deals}) > 1
++
++
++def test_base_seed_changes_deal(cfg):
++    other = make_cfg(base_seed=8)
++    assert [deal(cfg, i).role_names for i in range(10)] != [deal(other, i).role_names for i in range(10)]
++
++
++def test_role_multiset_and_ranges(cfg):
++    for i in range(30):
++        d = deal(cfg, i)
++        assert Counter(d.role_names) == Counter(cfg.roles)
++        assert sorted(d.seat_participants) == list(range(5))
++        assert 0 <= d.quest_leader < 5
++        assert [s.name for s in d.seat_specs] == [cfg.seats[p].name for p in d.seat_participants]
++
++
++def test_shuffles_are_independent(cfg):
++    no_seats = make_cfg(shuffle_seats=False)
++    no_roles = make_cfg(shuffle_roles=False)
++    for i in range(10):
++        full = deal(cfg, i)
++        assert deal(no_seats, i).role_names == full.role_names
++        assert deal(no_seats, i).seat_participants == list(range(5))
++        assert deal(no_roles, i).seat_participants == full.seat_participants
++        assert deal(no_roles, i).role_names == cfg.roles
++        assert deal(no_roles, i).quest_leader == full.quest_leader
++
++
++def test_fixed_leader():
++    cfg = make_cfg(random_leader=False)
++    assert {deal(cfg, i).quest_leader for i in range(10)} == {0}
++
++
++def test_presets_shape(cfg):
++    p = deal(cfg, 0).presets()
++    assert p["num_players"] == 5 and len(p["role_names"]) == 5
++
++
++@pytest.mark.parametrize("bad", [
++    dict(num_players=6),
++    dict(seats=[{"agent": "llm"}] * 4),
++    dict(roles=["Merlin", "Servant", "Servant", "Minion", "Minion"]),
++    dict(roles=["Merlin", "Servant", "Servant", "Servant", "Assassin"]),
++    dict(seats=[{"agent": "llm", "name": "x"}] * 5),
++])
++def test_invalid_config(bad):
++    with pytest.raises(ValueError):
++        make_cfg(**bad)
++
++
++def test_config_hash_ignores_non_semantic_fields(cfg):
++    assert cfg.config_hash() == make_cfg(concurrency=10, num_games=100).config_hash()
++    assert cfg.config_hash() != make_cfg(base_seed=1).config_hash()
+-- 
+2.34.1
+

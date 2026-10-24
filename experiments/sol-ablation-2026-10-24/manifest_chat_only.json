@@ -1,0 +1,72 @@
+{
+  "run_id": "chat_only",
+  "created_at": 1792822906.0969665,
+  "config_hash": "ad13dce2c0758491",
+  "git_sha": "79a407c15abd906fbc9e870c7086106d5d0346b5",
+  "git_dirty": false,
+  "config": {
+    "num_players": 5,
+    "seats": [
+      {
+        "agent": "llm",
+        "provider": "openai",
+        "model": "gpt-6.1-sol",
+        "effort": "medium",
+        "name": "llm:gpt-6.1-sol#0"
+      },
+      {
+        "agent": "llm",
+        "provider": "openai",
+        "model": "gpt-6.1-sol",
+        "effort": "medium",
+        "name": "llm:gpt-6.1-sol#1"
+      },
+      {
+        "agent": "llm",
+        "provider": "openai",
+        "model": "gpt-6.1-sol",
+        "effort": "medium",
+        "name": "llm:gpt-6.1-sol#2"
+      },
+      {
+        "agent": "llm",
+        "provider": "openai",
+        "model": "gpt-6.1-sol",
+        "effort": "medium",
+        "name": "llm:gpt-6.1-sol#3"
+      },
+      {
+        "agent": "llm",
+        "provider": "openai",
+        "model": "gpt-6.1-sol",
+        "effort": "medium",
+        "name": "llm:gpt-6.1-sol#4"
+      }
+    ],
+    "roles": [
+      "Merlin",
+      "Servant",
+      "Servant",
+      "Assassin",
+      "Minion"
+    ],
+    "num_games": 40,
+    "base_seed": 0,
+    "shuffle_roles": true,
+    "shuffle_seats": false,
+    "random_leader": true,
+    "condition": "chat_only",
+    "play_fn": "avalon.arena_play:play_game",
+    "concurrency": 4,
+    "max_game_retries": 0,
+    "llm_max_retries": 5,
+    "llm_timeout_s": 180.0,
+    "claude_bin": null,
+    "cli_max_parallel": 2,
+    "max_inflight_requests": 3,
+    "api_max_tokens": 16000,
+    "openai_base_url": null,
+    "backoff_base_s": 2.0,
+    "backoff_max_s": 60.0
+  }
+}

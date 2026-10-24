@@ -60,6 +60,7 @@ async def main():
                 role=Role.LOYAL_SERVANT,
                 condition="belief_graph",
                 seed=100 + i,
+                merlin_graph=True,  # Live demo: evil keeps P(Merlin)
             )
 
     runner = AvalonGameRunner(
@@ -79,6 +80,8 @@ async def main():
     print(f"Total Quests Played: {metrics.total_turns}")
     print(f"Merlin Id: {metrics.merlin_id}, Assassin Id: {metrics.assassin_id}")
     print(f"Merlin Survived: {metrics.merlin_survived}")
+    if metrics.assassin_p_merlin:
+        print(f"Assassin's P(Merlin) before the guess: {metrics.assassin_p_merlin}")
     print(f"Good Players Spy-ID Accuracies: {metrics.good_spy_id_accuracies}")
     print(f"Good Players Brier Scores: {metrics.good_brier_scores}")
     print(f"\nAll synthesized voice lines saved to: {tts_client.cache_dir}/")
