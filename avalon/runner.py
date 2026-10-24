@@ -86,6 +86,62 @@ class AvalonGameRunner:
         if self.on_event is not None:
             self.on_event(event_type, copy.deepcopy(data), [])
 
+    def _is_human(self, seat: int) -> bool:
+        """Checks if the player at `seat` is a human participant."""
+        agent = self.agents.get(seat)
+        if agent is None:
+            return False
+        return (
+            getattr(agent, "is_human", False)
+            or getattr(agent, "condition", None) == "human"
+            or agent.__class__.__name__ == "HumanVoiceAgent"
+        )
+
+    @staticmethod
+    def _format_team_names(team: List[int]) -> str:
+        """Formats player IDs into a clean English sentence list (e.g. 'Player 0 and Player 1')."""
+        names = [f"Player {p}" for p in team]
+        if len(names) == 1:
+            return names[0]
+        elif len(names) == 2:
+            return f"{names[0]} and {names[1]}"
+        else:
+            return ", ".join(names[:-1]) + f", and {names[-1]}"
+
+    async def _narrate(
+        self,
+        text: str,
+        tag: str,
+        turn: Optional[int] = None,
+        round_num: Optional[int] = None,
+        emotion: str = "contemplation",
+        style: Optional[str] = None,
+        prosody: Optional[List[str]] = None,
+    ):
+        """Broadcasts, logs, and speaks game master narration through Higgs TTS."""
+        self.log(f"[Narrator]: \"{text}\"")
+        if self.audio_pipeline:
+            self.audio_pipeline.enqueue_narrator(
+                text=text,
+                turn=turn if turn is not None else 0,
+                round_num=round_num if round_num is not None else 0,
+                tag=tag,
+                emotion=emotion,
+                style=style,
+                prosody=prosody,
+            )
+            await self.audio_pipeline.wait_until_idle()
+        elif self.tts_client:
+            await self.tts_client.speak_narrator(
+                text=text,
+                tag=tag,
+                turn=turn,
+                round_num=round_num,
+                emotion=emotion,
+                style=style,
+                prosody=prosody,
+            )
+
     async def run_game(
         self,
         preset_roles: Optional[Dict[int, Role]] = None,
@@ -160,26 +216,27 @@ class AvalonGameRunner:
                         recent_rejections=round_num,
                     )
 
-                    # Audio synthesis / playback
-                    if self.audio_pipeline:
-                        self.audio_pipeline.enqueue_turn(
-                            seat=p,
-                            text=utterance,
-                            turn=turn,
-                            round_num=round_num,
-                            delivery=delivery,
-                        )
-                    elif self.tts_client:
-                        await self.tts_client.speak_seat_utterance(
-                            seat=p,
-                            text=utterance,
-                            turn=turn,
-                            round_num=round_num,
-                            style=delivery.style,
-                            emotion=delivery.emotion,
-                            prosody=delivery.prosody,
-                            sfx=delivery.sfx,
-                        )
+                    # Audio synthesis / playback (skip for human player so bot doesn't repeat what human said)
+                    if not self._is_human(p):
+                        if self.audio_pipeline:
+                            self.audio_pipeline.enqueue_turn(
+                                seat=p,
+                                text=utterance,
+                                turn=turn,
+                                round_num=round_num,
+                                delivery=delivery,
+                            )
+                        elif self.tts_client:
+                            await self.tts_client.speak_seat_utterance(
+                                seat=p,
+                                text=utterance,
+                                turn=turn,
+                                round_num=round_num,
+                                style=delivery.style,
+                                emotion=delivery.emotion,
+                                prosody=delivery.prosody,
+                                sfx=delivery.sfx,
+                            )
 
                 # If pipelined, let utterances play out before leader finalizes action
                 if self.audio_pipeline:
@@ -196,6 +253,76 @@ class AvalonGameRunner:
                 await self.broadcast_event(
                     "team_proposed",
                     {"turn": turn, "round_num": round_num, "leader": leader, "team": proposed_team},
+                )
+
+                team_names = self._format_team_names(proposed_team)
+
+                # Leader bot announces team proposal out loud (skip if human player)
+                if not self._is_human(leader):
+                    if round_num >= 4:
+                        leader_speech = (
+                            f"Attention everyone. This is our hammer round. For Quest {turn + 1}, "
+                            f"I propose {team_names}. We must approve this mission, or Evil wins."
+                        )
+                    elif round_num > 0:
+                        leader_speech = (
+                            f"Following our previous vote, I have revised the plan. For Quest {turn + 1}, "
+                            f"I propose {team_names}. I ask for your trust."
+                        )
+                    else:
+                        leader_speech = (
+                            f"For Quest {turn + 1}, I propose {team_names}. "
+                            f"I believe this team will lead Camelot to victory."
+                        )
+
+                    self.log(f"Leader Player {leader} (Spoken): \"{leader_speech}\"")
+
+                    leader_agent = self.agents[leader]
+                    leader_delivery = GameStateEmotionMapper.get_delivery_for_utterance(
+                        seat=leader,
+                        role=leader_agent.role,
+                        turn=turn,
+                        round_num=round_num,
+                        last_quest_result=self.last_quest_result,
+                        quest_results=self.quest_results,
+                        is_hammer_round=(round_num >= 4),
+                        recent_rejections=round_num,
+                    )
+
+                    if self.audio_pipeline:
+                        self.audio_pipeline.enqueue_turn(
+                            seat=leader,
+                            text=leader_speech,
+                            turn=turn,
+                            round_num=round_num,
+                            delivery=leader_delivery,
+                            tag="proposal",
+                        )
+                        await self.audio_pipeline.wait_until_idle()
+                    elif self.tts_client:
+                        await self.tts_client.speak_seat_utterance(
+                            seat=leader,
+                            text=leader_speech,
+                            turn=turn,
+                            round_num=round_num,
+                            style=leader_delivery.style,
+                            emotion=leader_delivery.emotion,
+                            prosody=leader_delivery.prosody,
+                            sfx=leader_delivery.sfx,
+                            tag="proposal",
+                        )
+
+                # Narrator announces team proposal and calls for vote
+                narrator_proposal = (
+                    f"Leader Player {leader} has proposed {team_names} for Quest {turn + 1}. "
+                    f"All players, cast your votes to approve or reject."
+                )
+                await self._narrate(
+                    text=narrator_proposal,
+                    tag="proposal",
+                    turn=turn,
+                    round_num=round_num,
+                    emotion="contemplation",
                 )
 
                 # Phase 1: Team Voting
@@ -222,6 +349,38 @@ class AvalonGameRunner:
                         "votes": votes,
                         "approved": approved,
                     },
+                )
+
+                # Narrator announces team selection decision
+                num_approvals = sum(1 for v in votes.values() if v)
+                num_rejections = len(votes) - num_approvals
+                if approved:
+                    narrator_vote = (
+                        f"The council has voted. With {num_approvals} approvals and {num_rejections} rejections, "
+                        f"the proposed team is APPROVED. The chosen knights will embark on Quest {turn + 1}."
+                    )
+                    vote_emotion = "elation"
+                else:
+                    if round_num >= 4:
+                        narrator_vote = (
+                            f"With {num_approvals} approvals and {num_rejections} rejections, "
+                            f"the proposed team is REJECTED. Five proposals have failed, and Camelot falls to Evil!"
+                        )
+                        vote_emotion = "fear"
+                    else:
+                        next_leader = (leader + 1) % 5
+                        narrator_vote = (
+                            f"With {num_approvals} approvals and {num_rejections} rejections, "
+                            f"the proposed team is REJECTED. Leadership passes to Player {next_leader}."
+                        )
+                        vote_emotion = "contemplation"
+
+                await self._narrate(
+                    text=narrator_vote,
+                    tag="vote_result",
+                    turn=turn,
+                    round_num=round_num,
+                    emotion=vote_emotion,
                 )
 
                 if not approved:
@@ -253,9 +412,33 @@ class AvalonGameRunner:
                     {"turn": turn, "round_num": round_num, "team": proposed_team, "success": success, "num_fails": num_fails},
                 )
 
+                # Narrator announces quest outcome
+                if success:
+                    narrator_quest = f"Quest {turn + 1} has SUCCEEDED! Arthur's kingdom stands strong."
+                    quest_emotion = "elation"
+                else:
+                    fail_word = "betrayal" if num_fails == 1 else "betrayals"
+                    narrator_quest = f"Quest {turn + 1} has FAILED with {num_fails} {fail_word}! Treachery strikes Camelot."
+                    quest_emotion = "fear"
+
+                await self._narrate(
+                    text=narrator_quest,
+                    tag="quest_outcome",
+                    turn=turn,
+                    round_num=round_num,
+                    emotion=quest_emotion,
+                )
+
                 # Phase 3: Assassination (if triggered)
                 if self.engine.phase == Phase.ASSASSINATION and not self.engine.game_over:
                     self.log(f"\n[Assassination Phase] Good passed 3 quests! Assassin (Player {assassin_id}) must choose Merlin.")
+                    await self._narrate(
+                        text=f"The forces of Good have won three quests! But the Assassin, Player {assassin_id}, now steps forward to identify and eliminate Merlin.",
+                        tag="assassination_phase",
+                        turn=turn,
+                        round_num=round_num,
+                        emotion="fear",
+                    )
 
                     # Evil-only discussion: delivered to the evil players and nobody else
                     evil_order = sorted(evil_players, key=lambda p: p == assassin_id)
@@ -288,6 +471,12 @@ class AvalonGameRunner:
         self.log("\n" + "=" * 50)
         self.log(f"GAME OVER: {self.engine.win_reason}")
         self.log("=" * 50)
+
+        await self._narrate(
+            text=f"The battle for Avalon concludes. {self.engine.win_reason}",
+            tag="game_over",
+            emotion="elation" if self.engine.good_victory else "fear",
+        )
 
         good_spy_id_accuracies: Dict[int, bool] = {}
         good_brier_scores: Dict[int, float] = {}

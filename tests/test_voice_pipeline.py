@@ -182,3 +182,45 @@ def test_human_agent_initialization():
     assert agent.role == Role.LOYAL_SERVANT
     assert agent.side is True
     assert agent.condition == "human"
+    assert agent.is_human is True
+
+
+def test_narrator_voice_and_synthesis():
+    async def _run():
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tts_client = HiggsTTSClient(api_key="", cache_dir=tmpdir, play_audio=False)
+            assert tts_client.get_voice_for_seat(-1) == "nora"
+
+            wav_path = await tts_client.speak_narrator(
+                text="The proposed team is APPROVED.",
+                tag="test_vote",
+                turn=0,
+                round_num=0,
+            )
+            assert wav_path is not None
+            assert wav_path.exists()
+            assert "narrator" in wav_path.name
+
+    asyncio.run(_run())
+
+
+def test_runner_helpers_and_human_bypass():
+    from avalon.runner import AvalonGameRunner
+    from avalon.agents import HeuristicAgent
+
+    agents = {
+        0: HumanVoiceAgent(player_id=0, role=Role.LOYAL_SERVANT, use_mic=False),
+        1: HeuristicAgent(player_id=1, role=Role.LOYAL_SERVANT, condition="belief_graph"),
+    }
+    runner = AvalonGameRunner(agents=agents, verbose=False)
+
+    # Human detection
+    assert runner._is_human(0) is True
+    assert runner._is_human(1) is False
+    assert runner._is_human(99) is False
+
+    # English team name formatting
+    assert runner._format_team_names([0]) == "Player 0"
+    assert runner._format_team_names([0, 1]) == "Player 0 and Player 1"
+    assert runner._format_team_names([0, 2, 4]) == "Player 0, Player 2, and Player 4"
+

@@ -119,12 +119,18 @@ class AudioPipeline:
         turn: int,
         round_num: int,
         delivery: GameStateDelivery,
+        tag: str = "",
     ) -> SpokenTurn:
         """
         Enqueues an utterance into the pipeline. Immediately triggers background synthesis
         so it is ready when the playback worker reaches it.
         """
-        save_file = self.tts.cache_dir / f"turn_{turn + 1}_round_{round_num + 1}_seat_{seat}.wav"
+        suffix = f"_{tag}" if tag else ""
+        if seat == -1:
+            save_file = self.tts.cache_dir / f"turn_{turn + 1}_round_{round_num + 1}_narrator{suffix}.wav"
+        else:
+            save_file = self.tts.cache_dir / f"turn_{turn + 1}_round_{round_num + 1}_seat_{seat}{suffix}.wav"
+
         spoken_turn = SpokenTurn(
             seat=seat,
             text=text,
@@ -145,6 +151,31 @@ class AudioPipeline:
         self._pre_synthesis_tasks = [t for t in self._pre_synthesis_tasks if not t.done()]
 
         return spoken_turn
+
+    def enqueue_narrator(
+        self,
+        text: str,
+        turn: int,
+        round_num: int,
+        tag: str = "announcement",
+        emotion: str = "contemplation",
+        style: Optional[str] = None,
+        prosody: Optional[List[str]] = None,
+    ) -> SpokenTurn:
+        """Enqueues a Narrator announcement into the pipeline."""
+        delivery = GameStateDelivery(
+            emotion=emotion,
+            style=style,
+            prosody=prosody or ["expressive_high"],
+        )
+        return self.enqueue_turn(
+            seat=-1,
+            text=text,
+            turn=turn,
+            round_num=round_num,
+            delivery=delivery,
+            tag=tag,
+        )
 
     async def wait_until_idle(self):
         """Awaits playback of all currently enqueued spoken turns."""

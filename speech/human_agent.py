@@ -128,6 +128,7 @@ class HumanVoiceAgent(Agent):
         api_key: Optional[str] = None,
     ):
         super().__init__(player_id=player_id, role=role, condition="human")
+        self.is_human = True
         self.use_mic = use_mic and HAS_SOUNDDEVICE
         self.mic_duration = mic_duration
         self.api_key = api_key or os.getenv("BOSON_API_KEY", "")

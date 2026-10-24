@@ -33,6 +33,7 @@ except ImportError:
 
 
 DEFAULT_SEAT_VOICES: Dict[int, str] = {
+    -1: os.getenv("BOSON_VOICE_NARRATOR", "nora"), # Narrator: clear, cinematic female storyteller
     0: os.getenv("BOSON_VOICE_0", "marcus"),   # Minion: deep authoritative male
     1: os.getenv("BOSON_VOICE_1", "eleanor"),  # Loyal Servant 1: articulate poised female
     2: os.getenv("BOSON_VOICE_2", "jake"),     # Loyal Servant 2: high-energy reactive male
@@ -46,6 +47,11 @@ DEFAULT_SEAT_VOICES: Dict[int, str] = {
 # - Prosody tokens: 'expressive_high', 'expressive_low', 'speed_fast', 'speed_slow', 'speed_very_fast', 'pause', 'long_pause', 'pitch_low', 'pitch_high'
 # - SFX tokens: 'laughter', 'sigh', 'cough', 'crying', 'screaming', 'burping', 'humming', 'sniff', 'sneeze'
 SEAT_PROSODY = {
+    -1: {  # Narrator: Clear, cinematic, poised storyteller
+        "emotion": "contemplation",
+        "style": None,
+        "prosody": ["expressive_high"],
+    },
     0: {  # Player 0 (Minion): Forceful, assertive, determined soldier
         "emotion": "determination",
         "style": None,
@@ -75,6 +81,7 @@ SEAT_PROSODY = {
 
 # Tones for offline fallback synthesizer (Hz)
 SEAT_TONE_FREQS = {
+    -1: 523, # C5 (Narrator chime)
     0: 220,  # A3 (low)
     1: 440,  # A4 (mid)
     2: 554,  # C#5 (high-mid)
@@ -109,6 +116,8 @@ class HiggsTTSClient:
             print("[Higgs TTS Notice] No BOSON_API_KEY found in .env — playing synthesized offline tones (beeps). Set BOSON_API_KEY in .env to hear real voices.")
 
     def get_voice_for_seat(self, seat: int) -> str:
+        if seat == -1:
+            return self.seat_voices.get(-1, os.getenv("BOSON_VOICE_NARRATOR", "nora"))
         return self.seat_voices.get(seat, "default")
 
     def _generate_offline_wav(self, file_path: Path, freq: int = 440, duration_sec: float = 0.6):
@@ -254,13 +263,15 @@ class HiggsTTSClient:
         emotion: Optional[str] = None,
         prosody: Optional[List[str]] = None,
         sfx: Optional[str] = None,
+        tag: str = "",
     ) -> Optional[Path]:
         """
         Synthesizes and plays a player's line out loud in their designated seat voice.
         Applies seat-specific vocal delivery profile and verified Boson control tags.
         """
         voice = self.get_voice_for_seat(seat)
-        save_file = self.cache_dir / f"turn_{turn + 1}_round_{round_num + 1}_seat_{seat}.wav"
+        suffix = f"_{tag}" if tag else ""
+        save_file = self.cache_dir / f"turn_{turn + 1}_round_{round_num + 1}_seat_{seat}{suffix}.wav"
 
         profile = SEAT_PROSODY.get(seat, {
             "emotion": "determination",
@@ -304,3 +315,67 @@ class HiggsTTSClient:
             return save_file
 
         return None
+
+    async def speak_narrator(
+        self,
+        text: str,
+        tag: str = "announcement",
+        turn: Optional[int] = None,
+        round_num: Optional[int] = None,
+        emotion: Optional[str] = "contemplation",
+        style: Optional[str] = None,
+        prosody: Optional[List[str]] = None,
+        sfx: Optional[str] = None,
+    ) -> Optional[Path]:
+        """
+        Synthesizes and plays a narration line out loud in the Narrator voice ('nora').
+        Used for game master announcements (team proposals, vote outcomes, quest results).
+        """
+        voice = self.get_voice_for_seat(-1)
+        if turn is not None and round_num is not None:
+            save_file = self.cache_dir / f"narrator_turn_{turn + 1}_round_{round_num + 1}_{tag}.wav"
+        elif turn is not None:
+            save_file = self.cache_dir / f"narrator_turn_{turn + 1}_{tag}.wav"
+        else:
+            save_file = self.cache_dir / f"narrator_{tag}.wav"
+
+        profile = SEAT_PROSODY.get(-1, {
+            "emotion": "contemplation",
+            "style": None,
+            "prosody": ["expressive_high"],
+        })
+
+        chosen_style = style or profile.get("style")
+        chosen_emotion = emotion or profile.get("emotion")
+        chosen_prosody = prosody or profile.get("prosody", ["expressive_high"])
+        chosen_sfx = sfx
+
+        if text.startswith("<|"):
+            tag_end = text.rfind("|>")
+            active_tags = text[:tag_end + 2] if tag_end != -1 else ""
+            print(f"  [Higgs TTS Narrator] Synthesizing (Active Tags: {active_tags})...")
+        else:
+            tag_summary = f"Emotion: {chosen_emotion}, Prosody: {chosen_prosody}"
+            print(f"  [Higgs TTS Narrator] Synthesizing ({tag_summary})...")
+
+        # Synthesize audio (seat=-1 for distinct Narrator frequency tone)
+        await self.synthesize(
+            text=text,
+            voice=voice,
+            save_path=save_file,
+            style=chosen_style,
+            emotion=chosen_emotion,
+            prosody=chosen_prosody,
+            sfx=chosen_sfx,
+            seat=-1,
+        )
+
+        # Play audio out loud if file exists
+        if save_file.exists():
+            print(f"  [Higgs TTS Audio Out] Playing Narrator ({save_file.name})")
+            loop = asyncio.get_event_loop()
+            await loop.run_in_executor(None, self.play_wav_file, save_file)
+            return save_file
+
+        return None
+
