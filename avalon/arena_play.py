@@ -19,6 +19,8 @@ import time
 import weakref
 from typing import Any, Dict, List, Optional
 
+import aiohttp
+
 from arena.backends import BackendError, FatalBackendError, NotLoggedIn, UsageLimitReached, redact_keys
 from arena.config import ArenaConfig
 from arena.events import EventLog
@@ -46,9 +48,11 @@ def _inflight_semaphore(limit: int) -> asyncio.Semaphore:
 
 
 def is_gateway_rejection(message: str) -> bool:
-    r"""A 429 the gateway sent before running the request (concurrency or rate limit, not quota).
-    The request was never accepted, so retrying it can't be billed twice."""
+    r"""A 429 the gateway sent before running the request (concurrency or rate limit, not quota), or
+    a 503 "temporarily unavailable". Neither request was served, so retrying can't be billed twice."""
     lowered = message.lower()
+    if "(503)" in message and "temporarily unavailable" in lowered:
+        return True
     return "(429)" in message and ("rate_limit_error" in lowered or "concurrency" in lowered) \
         and not any(w in lowered for w in ("quota", "allowance"))
 
@@ -58,19 +62,24 @@ class LoggedLLMAgent(LLMAgent):
 
     Requests share a process-wide cap (`max_inflight_requests`), and gateway rejections (429
     concurrency/rate limits) are retried with backoff, since LLMAgent would otherwise catch them and
-    play a fallback move. LLMAgent also falls back on an expired key or exhausted allowance; the
-    first such error is kept in `fatal`, later calls fail immediately (no further spend), and the
+    play a fallback move. Failed connections (DNS, refused) are retried too: the request never left.
+    Each request is also bounded by `request_timeout_s` (`llm_timeout_s`): a stalled connection
+    otherwise holds its in-flight slot indefinitely. A timed-out request is retried as well; it may
+    already have been served, so this can bill one call twice. LLMAgent also falls back on an
+    expired key or exhausted allowance; the first such error is kept in `fatal`, later calls fail immediately (no further spend), and the
     game is reported as interrupted afterwards.
     """
 
     def __init__(self, *args, log: EventLog, max_inflight: int = 6, max_retries: int = 5,
-                 backoff_base_s: float = 2.0, backoff_max_s: float = 60.0, **kwargs):
+                 backoff_base_s: float = 2.0, backoff_max_s: float = 60.0,
+                 request_timeout_s: float = 180.0, **kwargs):
         super().__init__(*args, **kwargs)
         self.log = log
         self.max_inflight = max_inflight
         self.max_retries = max_retries
         self.backoff_base_s = backoff_base_s
         self.backoff_max_s = backoff_max_s
+        self.request_timeout_s = request_timeout_s
         self.fatal: Optional[BackendError] = None
         self.calls = 0
         self.errors = 0
@@ -87,11 +96,13 @@ class LoggedLLMAgent(LLMAgent):
             try:
                 async with _inflight_semaphore(self.max_inflight):
                     start = time.monotonic()
-                    data = await super()._post(payload)
+                    data = await asyncio.wait_for(super()._post(payload), self.request_timeout_s)
                 break
             except Exception as exc:
-                message = redact_keys(str(exc))
-                if is_gateway_rejection(message) and attempt < self.max_retries:
+                timed_out = isinstance(exc, asyncio.TimeoutError)
+                message = f"request timed out after {self.request_timeout_s}s" if timed_out else redact_keys(str(exc))
+                retryable = timed_out or isinstance(exc, aiohttp.ClientConnectorError) or is_gateway_rejection(message)
+                if retryable and attempt < self.max_retries:
                     delay = random.uniform(0, min(self.backoff_max_s, self.backoff_base_s * 2 ** attempt))
                     self.retries += 1
                     self.log.emit("retry", scope="llm_call", seat=self.player_id, attempt=attempt,
@@ -147,7 +158,7 @@ def build_agents(setup: GameSetup, cfg: ArenaConfig, log: EventLog) -> Dict[int,
             agents[seat] = LoggedLLMAgent(player_id=seat, role=role, condition=condition, model=spec.model,
                                           seed=seed, log=log, max_inflight=cfg.max_inflight_requests,
                                           max_retries=cfg.llm_max_retries, backoff_base_s=cfg.backoff_base_s,
-                                          backoff_max_s=cfg.backoff_max_s)
+                                          backoff_max_s=cfg.backoff_max_s, request_timeout_s=cfg.llm_timeout_s)
         else:
             raise FatalBackendError(
                 f"provider {spec.provider!r} isn't supported for AvalonBot games: LLMAgent needs an "

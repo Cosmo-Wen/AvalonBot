@@ -101,3 +101,47 @@ def test_rejection_classification():
     assert is_gateway_rejection("LLM API Error (429): " + json.dumps(REJECTION))
     assert not is_gateway_rejection('LLM API Error (429): {"error": {"code": "insufficient_quota", "type": "rate_limit_error"}}')
     assert not is_gateway_rejection("LLM API Error (500): oops")
+    assert is_gateway_rejection('LLM API Error (503): {"error":{"message":"Service temporarily unavailable, '
+                                'please retry later","type":"api_error"}}')
+
+
+def test_stalled_request_times_out_and_is_retried(tmp_path, monkeypatch):
+    # a connection that never answers must not hold its in-flight slot forever
+    from avalon.llm_agent import LLMAgent
+    attempts = []
+
+    async def stall_once(self, payload):
+        attempts.append(1)
+        if len(attempts) == 1:
+            await asyncio.sleep(3600)
+        return {"model": "stub", "usage": {}, "choices": [{"message": {"role": "assistant", "content": "ok"}}]}
+
+    monkeypatch.setattr(LLMAgent, "_post", stall_once)
+    log = EventLog(str(tmp_path / "g.jsonl"), run_id="t", game_idx=0)
+    agent = LoggedLLMAgent(player_id=0, role=Role.LOYAL_SERVANT, condition="chat_only", api_key="test",
+                           base_url="http://unused/v1", model="stub", log=log, max_inflight=1,
+                           backoff_base_s=0.01, backoff_max_s=0.01, request_timeout_s=0.2)
+    data = asyncio.run(agent._post({"model": "stub", "messages": [{"role": "user", "content": "hi"}]}))
+    log.close()
+    events = read_events(str(tmp_path / "g.jsonl"))
+    assert data["choices"][0]["message"]["content"] == "ok" and len(attempts) == 2
+    assert [e["data"]["error"] for e in events if e["type"] == "retry"] == ["request timed out after 0.2s"]
+    assert agent.errors == 0 and agent.fatal is None
+
+
+def test_connection_errors_are_retried(tmp_path):
+    # nothing listens on this port: every attempt fails to connect, and each one is retried
+    import socket
+    with socket.socket() as s:
+        s.bind(("127.0.0.1", 0))
+        port = s.getsockname()[1]
+    log = EventLog(str(tmp_path / "g.jsonl"), run_id="t", game_idx=0)
+    agent = LoggedLLMAgent(player_id=0, role=Role.LOYAL_SERVANT, condition="chat_only", api_key="test",
+                           base_url=f"http://127.0.0.1:{port}/v1", model="stub", log=log, max_inflight=1,
+                           max_retries=2, backoff_base_s=0.01, backoff_max_s=0.01)
+    with pytest.raises(Exception):
+        asyncio.run(agent._post({"model": "stub", "messages": [{"role": "user", "content": "hi"}]}))
+    log.close()
+    events = read_events(str(tmp_path / "g.jsonl"))
+    assert sum(e["type"] == "retry" for e in events) == 2 and sum(e["type"] == "llm_error" for e in events) == 1
+    assert agent.fatal is None
