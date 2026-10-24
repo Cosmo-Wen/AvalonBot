@@ -55,7 +55,7 @@ SEAT_FACES = [
     ("builtin_james_v1", 1),
     ("builtin_claire_v1", 2),
     ("builtin_emma_v1", 3),
-    ("builtin_james_v1", 2),
+    ("builtin_james_v1", 4),
     ("builtin_claire_v1", 3),
 ]
 
