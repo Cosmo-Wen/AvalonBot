@@ -146,6 +146,35 @@ class GameSession:
         self.closed = False
         self.human_seat: Optional[int] = None
         self.human_agent: Optional[HumanWebAgent] = None
+        self.speech_queue: asyncio.Queue = asyncio.Queue()
+        self.speech_worker_task: Optional[asyncio.Task] = None
+
+    def enqueue_speech(self, seat: int, text: str, seq: int) -> None:
+        """Pipelined speech: current speaker voices while next bot reasons in parallel."""
+        if self.speech_worker_task is None or self.speech_worker_task.done():
+            self.speech_worker_task = asyncio.create_task(self._speech_worker())
+        self.speech_queue.put_nowait((seat, text, seq))
+
+    async def _speech_worker(self) -> None:
+        while not self.closed:
+            try:
+                item = await self.speech_queue.get()
+                seat, text, seq = item
+                if seat == self.human_seat:
+                    await self.send("speaking", {"seat": seat, "active": True}, seq)
+                    await self.sleep(0.5)
+                    await self.send("speaking", {"seat": seat, "active": False}, seq)
+                else:
+                    await self.speak(seat, text, seq)
+                self.speech_queue.task_done()
+            except asyncio.CancelledError:
+                break
+            except Exception as e:
+                print(f"[SpeechWorker Error] {e}")
+
+    async def wait_speech_idle(self) -> None:
+        """Waits until all currently enqueued utterances have finished speaking."""
+        await self.speech_queue.join()
 
     def resolve_human_action(self, action: str, data: Dict[str, Any]) -> None:
         if self.human_agent:
@@ -162,6 +191,10 @@ class GameSession:
     def start(self, coro) -> None:
         if self.task is not None and not self.task.done():
             self.task.cancel()
+        if self.speech_worker_task is not None and not self.speech_worker_task.done():
+            self.speech_worker_task.cancel()
+        self.speech_queue = asyncio.Queue()
+        self.speech_worker_task = None
         self.paused = False
         self.task = asyncio.create_task(self._run(coro))
 
@@ -246,6 +279,8 @@ async def game_ws(ws: WebSocket):
             elif kind == "stop":
                 if session.task is not None:
                     session.task.cancel()
+                if session.speech_worker_task is not None:
+                    session.speech_worker_task.cancel()
             elif kind == "settings":
                 if "voice" in msg:
                     session.voice = bool(msg["voice"])
@@ -266,6 +301,8 @@ async def game_ws(ws: WebSocket):
         session.closed = True
         if session.task is not None:
             session.task.cancel()
+        if session.speech_worker_task is not None:
+            session.speech_worker_task.cancel()
 
 
 # ── Replay ───────────────────────────────────────────────────────────
@@ -369,24 +406,21 @@ async def run_live_game(session: GameSession, human_seat: Optional[int] = None, 
         if event_type in ("utterance", "evil_chat"):
             await session.send(event_type, data, seq)
             speaker = data.get("speaker")
-            if speaker != human_seat:
-                await session.speak(speaker, data["text"], seq)
-            else:
-                # Human player already spoke with their own voice — do not have a bot repeat it!
-                await session.send("speaking", {"seat": speaker, "active": True}, seq)
-                await session.sleep(0.5)
-                await session.send("speaking", {"seat": speaker, "active": False}, seq)
+            session.enqueue_speech(speaker, data["text"], seq)
         elif event_type in ("team_proposed", "team_vote_result", "quest_result"):
+            await session.wait_speech_idle()
             data["votes"] = {str(p): v for p, v in data.get("votes", {}).items()}
             await session.send(event_type, data, seq)
             await session.send("memory_update", {"players": serialize_memories(memories())}, seq)
             await session.sleep(1.6)
         elif event_type == "assassination":
+            await session.wait_speech_idle()
             await session.send("assassination", data, seq)
             await session.sleep(2.0)
 
     runner = AvalonGameRunner(agents=agents, tts_client=None, verbose=False, on_event=on_event)
     metrics = await runner.run_game()
+    await session.wait_speech_idle()
     await session.send("memory_update", {"players": serialize_memories(memories())}, runner.seq + 1)
     await session.send("game_over", {
         "winner": "Good" if metrics.good_victory else "Evil",
