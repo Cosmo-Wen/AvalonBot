@@ -7,11 +7,13 @@ Computes evaluation metrics (Win Rate, Spy-ID accuracy, Brier score, Merlin surv
 """
 
 import asyncio
-from typing import Dict, List, Optional, Any
+import copy
+from typing import Dict, Iterable, List, Optional, Any
 from dataclasses import dataclass, field
 
 from .engine import AvalonEngine, Role, Phase, ROLE_NAMES
 from .agents import Agent, HeuristicAgent
+from .belief_graph import brier_score, spy_id_accurate
 from speech.boson_tts import HiggsTTSClient
 
 
@@ -26,6 +28,10 @@ class GameMetrics:
     merlin_survived: bool
     good_spy_id_accuracies: Dict[int, bool] = field(default_factory=dict)
     good_brier_scores: Dict[int, float] = field(default_factory=dict)
+    final_p_evil: Dict[int, Dict[int, float]] = field(default_factory=dict)
+    belief_fallbacks: Dict[int, int] = field(default_factory=dict)
+    constraint_resets: Dict[int, int] = field(default_factory=dict)
+    assassin_p_merlin: Optional[Dict[int, float]] = None
 
 
 class AvalonGameRunner:
@@ -44,14 +50,21 @@ class AvalonGameRunner:
         self.engine = AvalonEngine(seed=seed)
         self.tts_client = tts_client
         self.verbose = verbose
+        self.seq = 0
 
     def log(self, msg: str):
         if self.verbose:
             print(msg)
 
     async def broadcast_event(self, event_type: str, data: Dict[str, Any]):
-        for agent in self.agents.values():
-            agent.observe_event(event_type, data)
+        await self.deliver_event(event_type, data, self.agents.keys())
+
+    async def deliver_event(self, event_type: str, data: Dict[str, Any], recipients: Iterable[int]):
+        """Gives each recipient its own copy of the event, stamped with the next global seq."""
+        self.seq += 1
+        stamped = dict(data, seq=self.seq)
+        for p in recipients:
+            self.agents[p].observe_event(event_type, copy.deepcopy(stamped))
 
     async def run_game(
         self,
@@ -63,6 +76,7 @@ class AvalonGameRunner:
         """
         # 1. Reset engine and initialize roles
         roles = self.engine.reset(preset_roles=preset_roles, preset_leader=preset_leader)
+        self.seq = 0
 
         self.log("\n" + "=" * 50)
         self.log("Starting New 5-Player Avalon Game")
@@ -79,6 +93,7 @@ class AvalonGameRunner:
         merlin_id = self.engine.get_merlin()
         assassin_id = self.engine.get_assassin()
         evil_players = set(self.engine.get_evil_players())
+        assassin_p_merlin: Optional[Dict[int, float]] = None
 
         # 2. Game Loop
         while not self.engine.game_over:
@@ -101,7 +116,10 @@ class AvalonGameRunner:
                     team_size=req_team_size,
                 )
                 self.log(f"Player {p}: \"{utterance}\"")
-                await self.broadcast_event("utterance", {"speaker": p, "text": utterance})
+                await self.broadcast_event(
+                    "utterance",
+                    {"turn": turn, "round_num": round_num, "speaker": p, "text": utterance},
+                )
 
                 # Optional voice synthesis
                 if self.tts_client:
@@ -111,6 +129,9 @@ class AvalonGameRunner:
                         turn=turn,
                         round_num=round_num,
                     )
+
+            # Each player reads the discussion into its own memory before the proposal
+            await asyncio.gather(*(a.after_discussion(turn, round_num) for a in self.agents.values()))
 
             # Leader proposes team
             proposed_team = await self.agents[leader].propose_team(turn=turn, team_size=req_team_size)
@@ -158,14 +179,37 @@ class AvalonGameRunner:
             next_phase, game_over, success, num_fails = self.engine.vote_on_quest(quest_votes)
             self.log(f"[Quest Outcome] Quest {turn + 1} {'SUCCEEDED' if success else 'FAILED'} ({num_fails} fail votes)")
 
+            # Each card is known only to the player who played it
+            for p, card in quest_votes.items():
+                self.agents[p].record_own_quest_card(turn, card)
+
             await self.broadcast_event(
                 "quest_result",
-                {"turn": turn, "team": proposed_team, "success": success, "num_fails": num_fails},
+                {"turn": turn, "round_num": round_num, "team": proposed_team, "success": success, "num_fails": num_fails},
             )
 
             # Phase 3: Assassination (if triggered)
             if self.engine.phase == Phase.ASSASSINATION and not self.engine.game_over:
                 self.log(f"\n[Assassination Phase] Good passed 3 quests! Assassin (Player {assassin_id}) must choose Merlin.")
+
+                # Evil-only discussion: delivered to the evil players and nobody else
+                evil_order = sorted(evil_players, key=lambda p: p == assassin_id)
+                for p in evil_order:
+                    line = await self.agents[p].evil_discussion(turn=self.engine.turn)
+                    if line:
+                        self.log(f"[Evil only] Player {p}: \"{line}\"")
+                        await self.deliver_event(
+                            "evil_chat",
+                            {"turn": self.engine.turn, "round_num": 0, "speaker": p, "text": line},
+                            recipients=evil_order,
+                        )
+
+                assassin_memory = self.agents[assassin_id].memory
+                if assassin_memory is not None and assassin_memory.merlin is not None:
+                    assassin_p_merlin = dict(assassin_memory.merlin.p_merlin)
+                    shown = ", ".join(f"P{p}: {v:.2f}" for p, v in sorted(assassin_p_merlin.items()))
+                    self.log(f"[Assassin's P(Merlin)] {shown}")
+
                 target = await self.agents[assassin_id].assassinate()
                 self.log(f"Assassin Player {assassin_id} targets Player {target}!")
                 self.engine.assassinate(assassin=assassin_id, target=target)
@@ -177,11 +221,20 @@ class AvalonGameRunner:
 
         good_spy_id_accuracies: Dict[int, bool] = {}
         good_brier_scores: Dict[int, float] = {}
+        final_p_evil: Dict[int, Dict[int, float]] = {}
+        belief_fallbacks: Dict[int, int] = {}
+        constraint_resets: Dict[int, int] = {}
 
+        # Only Loyal Servants hold P(evil)
         for p, agent in self.agents.items():
-            if agent.side and agent.belief_graph:
-                good_spy_id_accuracies[p] = agent.belief_graph.is_spy_id_accurate(evil_players)
-                good_brier_scores[p] = agent.belief_graph.brier_score(evil_players)
+            p_evil = await agent.final_beliefs()
+            if p_evil is None:
+                continue
+            final_p_evil[p] = p_evil
+            good_spy_id_accuracies[p] = spy_id_accurate(p_evil, evil_players)
+            good_brier_scores[p] = brier_score(p_evil, evil_players)
+            belief_fallbacks[p] = agent.memory.belief_fallbacks
+            constraint_resets[p] = agent.memory.constraint_resets
 
         merlin_survived = (
             self.engine.good_victory is True
@@ -199,4 +252,8 @@ class AvalonGameRunner:
             merlin_survived=merlin_survived,
             good_spy_id_accuracies=good_spy_id_accuracies,
             good_brier_scores=good_brier_scores,
+            final_p_evil=final_p_evil,
+            belief_fallbacks=belief_fallbacks,
+            constraint_resets=constraint_resets,
+            assassin_p_merlin=assassin_p_merlin,
         )

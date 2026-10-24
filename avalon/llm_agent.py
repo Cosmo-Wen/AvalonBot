@@ -1,22 +1,22 @@
 """
 LLM-powered Agent for 5-Player Avalon.
 
-Supports:
-- Condition A (Baseline): Chat history & game log only
-- Condition B (Proposed): Chat history + Structured Belief Graph injected into prompt
-- Condition C: Deterministic rule-based belief updates + LLM decisions
+Every agent reads only its own memory (see MEMORY_MODEL.md). For Loyal Servants:
+- Condition A (chat_only): full observation log plus free-text notes from a reflection call
+- Condition B (belief_graph): graph table plus recall tools; P(evil) from its own extraction call
+- Condition C (rule_graph): graph table plus recall tools; P(evil) from the Condition C rule
+Merlin and the evil players see their full observation log in every condition.
 Compatible with OpenAI, Boson AI, Groq, or any OpenAI-compatible API endpoint.
 """
 
 import os
 import json
-import re
 from typing import Dict, List, Optional, Any
 import aiohttp
 
 from .engine import Role, Phase, ROLE_NAMES, ROLE_SIDES
 from .agents import Agent
-from .tools import AVALON_TOOL_DEFINITIONS
+from .tools import RECALL_TOOL_DEFINITIONS, get_tool
 
 
 SYSTEM_PROMPT_TEMPLATE = """You are Player {player_id} in a 5-player game of The Resistance: Avalon.
@@ -28,126 +28,278 @@ Role rules:
 - Merlin sees who is Evil ({seen_evil_str}), but MUST NOT reveal this identity directly or the Assassin will shoot you!
 - Evil players see each other ({seen_evil_str}).
 - Servants do not know anyone's identity and must deduce who is evil through voting and proposals.
+- A failed quest proves at least one team member is evil. A passed quest proves nothing, since evil may pass.
+
+Your memory below holds only what you observed and what you yourself thought. Entries are numbered (#).
 
 Personality:
 - Be concise, strategic, and direct. Keep your spoken lines to 1-2 natural sentences.
 - Never use markdown formatting, bullet points, or emojis in spoken discussion.
 """
 
+EXTRACTION_PROMPT = """Discussion round {label} just ended. Record what you heard into your private memory by calling record_observations.
+
+This round's lines:
+{transcript}
+
+Rules:
+- edges: only for what players actually said. Cite the # numbers of the speaker's own lines in sources. Quote at most 10 words.
+- accused/defended point at a player id. backed_team/opposed_team point at an existing team label like Q1.1. claimed_role names a role.
+- notes: your own read on each player, at most 15 words each.
+{p_evil_rule}"""
+
+P_EVIL_RULE_B = (
+    "- p_evil: your probability that each of players {opponents} is evil. Exactly 2 of them are evil, so the values "
+    "sum to 2. Each failed team's members must sum to at least its number of fails. Votes and quest results "
+    "outweigh talk."
+)
+P_EVIL_RULE_C = "- Leave out p_evil. Your beliefs are computed by code from votes, quest results, and these edges."
+
+MOCK_LINE = "I support this mission and want to ensure we pick trusted players."
+MAX_RECALL_STEPS = 2
+
 
 class LLMAgent(Agent):
     """
-    LLM-powered Avalon agent supporting Condition A and Condition B.
+    LLM-powered Avalon agent for conditions A, B, and C.
     """
+
+    llm_beliefs = True
 
     def __init__(
         self,
         player_id: int,
         role: Role,
         num_players: int = 5,
-        condition: str = "belief_graph",  # "chat_only" or "belief_graph"
+        condition: str = "belief_graph",  # "chat_only", "belief_graph", or "rule_graph"
         model: str = "gpt-4o-mini",
         api_key: Optional[str] = None,
         base_url: str = "https://api.openai.com/v1",
         temperature: float = 0.7,
         seed: Optional[int] = None,
+        merlin_graph: bool = False,
     ):
-        super().__init__(player_id, role, num_players, condition, seed)
+        super().__init__(player_id, role, num_players, condition, seed, merlin_graph=merlin_graph)
         self.model = model
         self.api_key = api_key or os.getenv("OPENAI_API_KEY") or os.getenv("BOSON_API_KEY", "")
         self.base_url = base_url.rstrip("/")
         self.temperature = temperature
 
+    @property
+    def _offers_recall(self) -> bool:
+        return self.is_servant and self.uses_graph and self.memory is not None
+
     def _build_system_prompt(self) -> str:
         seen_evil = self.private_info.get("seen_evil", [])
         seen_evil_str = f"Player(s) {seen_evil}" if seen_evil else "none"
 
-        base_prompt = SYSTEM_PROMPT_TEMPLATE.format(
+        return SYSTEM_PROMPT_TEMPLATE.format(
             player_id=self.player_id,
             role_name=ROLE_NAMES[self.role],
             side_name="Good" if self.side else "Evil",
             seen_evil_str=seen_evil_str,
         )
 
-        if self.condition in ("belief_graph", "rule_graph") and self.belief_graph:
-            table = self.belief_graph.to_prompt_table()
-            base_prompt += f"\n\n{table}\nUse your belief table to guide who you trust, accuse, and propose."
+    def _memory_context(self) -> str:
+        m = self.memory
+        if m is None:
+            return ""
+        parts = [m.render_private()]
+        if self._offers_recall:
+            parts.append("Your belief graph:\n" + m.render_table())
+            quest = m.log[-1].quest if m.log else 1
+            recent = m.render_log(m.entries_since_quest(quest - 1))
+            parts.append("Recent events (use the recall tools for older ones):\n" + (recent or "none yet"))
+        else:
+            if m.merlin is not None:
+                parts.append(
+                    "Your Merlin graph (P(Merlin): how likely each good player is Merlin, "
+                    "based on how accurate their votes and accusations have been):\n" + m.render_table()
+                )
+            parts.append("Everything you have observed:\n" + (m.render_log() or "nothing yet"))
+            if m.free_notes:
+                parts.append("Your private notes:\n" + m.render_notes())
+            parts.append(m.graph.render_my_record())
+        return "\n\n".join(parts)
 
-        return base_prompt
+    def _messages(self, user_prompt: str) -> List[Dict[str, Any]]:
+        return [
+            {"role": "system", "content": self._build_system_prompt()},
+            {"role": "user", "content": self._memory_context() + "\n\n" + user_prompt},
+        ]
 
-    async def _call_llm(self, user_prompt: str, json_mode: bool = False) -> str:
-        """
-        Executes an asynchronous chat completion request.
-        """
-        if not self.api_key:
-            # Fallback mock for testing without live API keys
-            return "I support this mission and want to ensure we pick trusted players."
-
+    async def _post(self, payload: Dict[str, Any]) -> Dict[str, Any]:
         headers = {
             "Authorization": f"Bearer {self.api_key}",
             "Content-Type": "application/json",
         }
-
-        messages = [
-            {"role": "system", "content": self._build_system_prompt()},
-            {"role": "user", "content": "\n".join(self.chat_history[-15:]) + "\n\n" + user_prompt},
-        ]
-
-        payload: Dict[str, Any] = {
-            "model": self.model,
-            "messages": messages,
-            "temperature": self.temperature,
-            "max_tokens": 150,
-        }
-        if json_mode:
-            payload["response_format"] = {"type": "json_object"}
-
         url = f"{self.base_url}/chat/completions"
         async with aiohttp.ClientSession() as session:
             async with session.post(url, json=payload, headers=headers) as resp:
                 if resp.status != 200:
                     err_msg = await resp.text()
                     raise RuntimeError(f"LLM API Error ({resp.status}): {err_msg}")
-                data = await resp.json()
-                return data["choices"][0]["message"]["content"].strip()
+                return await resp.json()
 
-    async def _call_llm_tool(self, user_prompt: str, tool_name: str, tools: List[Dict[str, Any]]) -> Dict[str, Any]:
+    @staticmethod
+    def _parse_args(call: Dict[str, Any]) -> Dict[str, Any]:
+        try:
+            return json.loads(call["function"].get("arguments") or "{}")
+        except (KeyError, TypeError, ValueError):
+            return {}
+
+    async def _call_llm(self, user_prompt: str, json_mode: bool = False, max_tokens: int = 150) -> str:
         """
-        Calls the LLM with tool definitions, forcing or guiding the model to execute tool_name.
+        Executes an asynchronous chat completion request.
+        """
+        if not self.api_key:
+            # Fallback mock for testing without live API keys
+            return MOCK_LINE
+
+        payload: Dict[str, Any] = {
+            "model": self.model,
+            "messages": self._messages(user_prompt),
+            "temperature": self.temperature,
+            "max_tokens": max_tokens,
+        }
+        if json_mode:
+            payload["response_format"] = {"type": "json_object"}
+
+        data = await self._post(payload)
+        return data["choices"][0]["message"]["content"].strip()
+
+    async def _call_llm_tool(self, user_prompt: str, tool_name: str) -> Dict[str, Any]:
+        """
+        Calls the LLM until it uses tool_name. Servants in B and C may first use the
+        recall tools over their own memory, for up to MAX_RECALL_STEPS rounds.
         """
         if not self.api_key:
             return {}
 
-        headers = {
-            "Authorization": f"Bearer {self.api_key}",
-            "Content-Type": "application/json",
-        }
+        messages = self._messages(user_prompt)
+        tools = [get_tool(tool_name)]
 
-        messages = [
-            {"role": "system", "content": self._build_system_prompt()},
-            {"role": "user", "content": "\n".join(self.chat_history[-15:]) + "\n\n" + user_prompt},
-        ]
+        if self._offers_recall:
+            tools = tools + RECALL_TOOL_DEFINITIONS
+            try:
+                for _ in range(MAX_RECALL_STEPS):
+                    data = await self._post({
+                        "model": self.model,
+                        "messages": messages,
+                        "tools": tools,
+                        "tool_choice": "required",
+                        "temperature": self.temperature,
+                    })
+                    msg = data["choices"][0]["message"]
+                    calls = msg.get("tool_calls") or []
+                    if not calls:
+                        break
+                    for call in calls:
+                        if call["function"]["name"] == tool_name:
+                            return self._parse_args(call)
+                    messages.append({"role": "assistant", "content": msg.get("content"), "tool_calls": calls})
+                    for call in calls:
+                        result = self.memory.run_tool(call["function"]["name"], self._parse_args(call))
+                        messages.append({"role": "tool", "tool_call_id": call["id"], "content": result})
+            except RuntimeError:
+                pass  # Provider may not support tool_choice "required"; force the tool below.
 
-        payload: Dict[str, Any] = {
+        data = await self._post({
             "model": self.model,
             "messages": messages,
             "tools": tools,
             "tool_choice": {"type": "function", "function": {"name": tool_name}},
             "temperature": self.temperature,
-        }
+        })
+        choice = data["choices"][0]["message"]
+        for call in choice.get("tool_calls") or []:
+            if call["function"]["name"] == tool_name:
+                return self._parse_args(call)
+        return {}
 
-        url = f"{self.base_url}/chat/completions"
-        async with aiohttp.ClientSession() as session:
-            async with session.post(url, json=payload, headers=headers) as resp:
-                if resp.status != 200:
-                    err_msg = await resp.text()
-                    raise RuntimeError(f"LLM Tool Call Error ({resp.status}): {err_msg}")
-                data = await resp.json()
-                choice = data["choices"][0]["message"]
-                if "tool_calls" in choice and choice["tool_calls"]:
-                    call = choice["tool_calls"][0]
-                    return json.loads(call["function"]["arguments"])
-                return {}
+    async def after_discussion(self, turn: int, round_num: int) -> None:
+        """
+        This player's own read of the discussion round. Servants: reflection in A, extraction
+        in B and C. Evil players with a Merlin graph: extraction for talk edges only.
+        """
+        if self.memory is None or not (self.is_servant or self.reads_talk):
+            return
+        m = self.memory
+        label = f"Q{turn + 1}.{round_num + 1}"
+        transcript = m.render_log(m.discussion_entries(turn + 1, round_num + 1)) or "Nobody spoke."
+
+        if not self.reads_talk:
+            if not self.api_key:
+                return
+            prompt = (
+                f"Private reflection after discussion round {label}. Nobody else will see this. "
+                f"In at most 40 words, note who you suspect and why, citing # numbers.\n\nThis round:\n{transcript}"
+            )
+            try:
+                m.add_free_note(await self._call_llm(prompt, max_tokens=80))
+            except Exception:
+                pass
+            return
+
+        opponents = [p for p in range(self.num_players) if p != self.player_id]
+        llm_sets_p_evil = m.beliefs is not None and m.belief_mode == "llm"
+        p_evil_rule = P_EVIL_RULE_B.format(opponents=opponents) if llm_sets_p_evil else P_EVIL_RULE_C
+        prompt = EXTRACTION_PROMPT.format(label=label, transcript=transcript, p_evil_rule=p_evil_rule)
+        try:
+            args = await self._call_llm_tool(prompt, "record_observations")
+        except Exception:
+            args = {}
+        m.add_talk_edges(args.get("edges") or [])
+        m.set_notes(args.get("notes") or {})
+
+        if not llm_sets_p_evil:
+            return
+        errors = m.apply_llm_beliefs(args.get("p_evil"))
+        if not errors:
+            return
+        retry = (
+            prompt + "\n\nYour p_evil was rejected: " + "; ".join(errors)
+            + ". Call record_observations again with corrected p_evil."
+        )
+        try:
+            retry_args = await self._call_llm_tool(retry, "record_observations")
+        except Exception:
+            retry_args = {}
+        if m.apply_llm_beliefs(retry_args.get("p_evil")):
+            m.fall_back_to_rule()
+
+    async def final_beliefs(self) -> Optional[Dict[int, float]]:
+        m = self.memory
+        if m is None or m.beliefs is None:
+            return None
+        if self.uses_graph:
+            return dict(m.beliefs.p_evil)
+
+        # Condition A keeps no beliefs during play; it is asked once, at game end.
+        if self.api_key:
+            opponents = [p for p in range(self.num_players) if p != self.player_id]
+            prompt = (
+                f"The game is over. Call report_beliefs with your probability that each of players {opponents} "
+                f"is evil. Exactly 2 of them are evil, so the values sum to 2."
+            )
+            try:
+                args = await self._call_llm_tool(prompt, "report_beliefs")
+            except Exception:
+                args = {}
+            if not m.apply_llm_beliefs(args.get("p_evil")):
+                return dict(m.beliefs.p_evil)
+        m.fall_back_to_rule()
+        return dict(m.beliefs.p_evil)
+
+    async def evil_discussion(self, turn: int) -> str:
+        prompt = (
+            "Good has passed 3 quests. Only your evil partner hears this. "
+            "In 1-2 sentences, say who you think Merlin is and why."
+        )
+        try:
+            return await self._call_llm(prompt)
+        except Exception:
+            return ""
 
     async def team_discussion(self, turn: int, round_num: int, leader: int, team_size: int) -> str:
         prompt = (
@@ -159,50 +311,66 @@ class LLMAgent(Agent):
         except Exception as e:
             return f"As Player {self.player_id}, I want to make sure we keep evil players off Quest {turn + 1}."
 
+    def _valid_team(self, team: List[int], team_size: int) -> bool:
+        return len(set(team)) == team_size and all(0 <= p < self.num_players for p in team)
+
     async def propose_team(self, turn: int, team_size: int) -> List[int]:
+        round_num = self._current_round_num()
         prompt = f"You are the Leader for Quest {turn + 1}. Call propose_team with exactly {team_size} distinct players."
         try:
             # 1. Try Tool Calling first
-            args = await self._call_llm_tool(prompt, "propose_team", AVALON_TOOL_DEFINITIONS)
+            args = await self._call_llm_tool(prompt, "propose_team")
             if "team" in args:
                 team = [int(x) for x in args["team"]]
-                if len(set(team)) == team_size and all(0 <= p < self.num_players for p in team):
+                if self._valid_team(team, team_size):
+                    self._record_reason(turn, round_num, "proposed", str(args.get("reasoning", "")))
                     return sorted(team)
 
             # 2. Try JSON mode fallback
-            resp = await self._call_llm(prompt + " Output strictly JSON: {\"team\": [...]}.", json_mode=True)
+            resp = await self._call_llm(
+                prompt + " Output strictly JSON: {\"team\": [...], \"reasoning\": \"...\"}.", json_mode=True
+            )
             data = json.loads(resp)
             team = [int(x) for x in data["team"]]
-            if len(set(team)) == team_size and all(0 <= p < self.num_players for p in team):
+            if self._valid_team(team, team_size):
+                self._record_reason(turn, round_num, "proposed", str(data.get("reasoning", "")))
                 return sorted(team)
         except Exception:
             pass
 
-        # 3. Fallback to belief heuristic
+        # 3. Fallback: least suspected players, when this player has an estimate
         team = [self.player_id]
         others = [p for p in range(self.num_players) if p != self.player_id]
-        if self.belief_graph:
-            others.sort(key=lambda p: self.belief_graph.p_evil[p])
+        if all(self.suspicion(p) is not None for p in others):
+            others.sort(key=lambda p: self.suspicion(p))
         team.extend(others[: team_size - 1])
+        self._record_reason(turn, round_num, "proposed", "fallback: picked the players I suspect least")
         return sorted(team)
 
     async def vote_on_team(self, turn: int, round_num: int, leader: int, team: List[int]) -> bool:
         if round_num >= 4:
+            self._record_reason(turn, round_num, "approved", "hammer round auto-approves")
             return True  # Hammer round auto-approves
 
         prompt = f"Quest {turn + 1}, Round {round_num + 1}. Leader Player {leader} proposed team {team}. Call vote_on_team to approve or reject."
         try:
             # 1. Try Tool Calling first
-            args = await self._call_llm_tool(prompt, "vote_on_team", AVALON_TOOL_DEFINITIONS)
+            args = await self._call_llm_tool(prompt, "vote_on_team")
             if "approve" in args:
-                return bool(args["approve"])
+                approve = bool(args["approve"])
+                self._record_reason(turn, round_num, "approved" if approve else "rejected", str(args.get("reason", "")))
+                return approve
 
             # 2. Try JSON mode fallback
-            resp = await self._call_llm(prompt + " Output JSON: {\"approve\": true/false}", json_mode=True)
+            resp = await self._call_llm(prompt + " Output JSON: {\"approve\": true/false, \"reason\": \"...\"}", json_mode=True)
             data = json.loads(resp)
-            return bool(data.get("approve", True))
+            approve = bool(data.get("approve", True))
+            self._record_reason(turn, round_num, "approved" if approve else "rejected", str(data.get("reason", "")))
+            return approve
         except Exception:
-            return self.player_id in team
+            approve = self.player_id in team
+            self._record_reason(turn, round_num, "approved" if approve else "rejected", "fallback: approve only teams I am on")
+            return approve
 
     async def vote_on_quest(self, turn: int, team: List[int]) -> bool:
         if self.side:
@@ -211,7 +379,7 @@ class LLMAgent(Agent):
         prompt = f"You are Evil on Quest {turn + 1} with team {team}. Call vote_on_quest to Pass (bluff) or Fail (score)."
         try:
             # 1. Try Tool Calling first
-            args = await self._call_llm_tool(prompt, "vote_on_quest", AVALON_TOOL_DEFINITIONS)
+            args = await self._call_llm_tool(prompt, "vote_on_quest")
             if "pass_quest" in args:
                 return bool(args["pass_quest"])
 
@@ -225,9 +393,11 @@ class LLMAgent(Agent):
     async def assassinate(self) -> int:
         good_players = [p for p in range(self.num_players) if p not in self.private_info.get("seen_evil", []) and p != self.player_id]
         prompt = f"Good succeeded 3 quests! You are the Assassin. Call assassinate with your target player ID among {good_players}."
+        if self.memory is not None and self.memory.merlin is not None:
+            prompt += " Weigh your Merlin graph and what your partner said."
         try:
             # 1. Try Tool Calling first
-            args = await self._call_llm_tool(prompt, "assassinate", AVALON_TOOL_DEFINITIONS)
+            args = await self._call_llm_tool(prompt, "assassinate")
             if "target" in args and int(args["target"]) in good_players:
                 return int(args["target"])
 
@@ -239,4 +409,7 @@ class LLMAgent(Agent):
                 return target
         except Exception:
             pass
+        guess = self.merlin_guess()
+        if guess is not None:
+            return guess
         return self.rng.choice(good_players) if good_players else 0
