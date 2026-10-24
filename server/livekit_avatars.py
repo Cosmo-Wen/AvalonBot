@@ -42,8 +42,7 @@ MAX_DURATION_SECONDS = 3600
 PLAYOUT_TIMEOUT = 60.0
 CREATE_ATTEMPTS = 5
 
-# Boson's presets. A second concurrent James session was refused (404), so James appears once.
-# Override per seat with BOSON_AVATAR_<seat>.
+# Boson's presets (GET /v1/avatars). Override per seat with BOSON_AVATAR_<seat>.
 PRESET_AVATARS = [
     "builtin_james_v1",
     "builtin_claire_v1",
@@ -129,9 +128,19 @@ class AvatarManager:
         return self._token(identity, publish=False, subscribe=True)
 
     async def _create_session(self, http: aiohttp.ClientSession, seat: int) -> Optional[SeatAvatar]:
+        # Boson answers 404 avatar_not_found when it can't host another session of a listed preset
+        # right now, so fall back to the other faces rather than leaving the seat empty.
+        preferred = os.getenv(f"BOSON_AVATAR_{seat}", PRESET_AVATARS[seat % len(PRESET_AVATARS)])
+        for avatar_id in [preferred] + [a for a in dict.fromkeys(PRESET_AVATARS) if a != preferred]:
+            avatar = await self._create_with(http, seat, avatar_id)
+            if avatar is not None or "avatar_not_found" not in self.errors.get(seat, ""):
+                return avatar
+        return None
+
+    async def _create_with(self, http: aiohttp.ClientSession, seat: int, avatar_id: str) -> Optional[SeatAvatar]:
         body = {
             "model": "higgs-avatar",
-            "avatar_id": os.getenv(f"BOSON_AVATAR_{seat}", PRESET_AVATARS[seat % len(PRESET_AVATARS)]),
+            "avatar_id": avatar_id,
             "transport": {
                 "type": "livekit",
                 "url": LIVEKIT_URL,
@@ -151,8 +160,10 @@ class AvatarManager:
                 async with http.post(f"{BOSON_BASE_URL}/avatar/sessions", json=body, headers=headers,
                                      timeout=aiohttp.ClientTimeout(total=90)) as resp:
                     if resp.status == 201:
+                        self.errors.pop(seat, None)
+                        print(f"[avatar] seat {seat}: {avatar_id}")
                         return SeatAvatar(seat, (await resp.json())["id"])
-                    self.errors[seat] = f"create failed {resp.status}: {(await resp.text())[:200]}"
+                    self.errors[seat] = f"{avatar_id}: create failed {resp.status}: {(await resp.text())[:200]}"
                     if resp.status != 429:
                         break
                     retry_after = float(resp.headers.get("Retry-After", 2 + 2 * attempt))

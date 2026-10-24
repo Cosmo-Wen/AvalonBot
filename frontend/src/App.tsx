@@ -177,6 +177,11 @@ export default function App() {
           >
             {AVATAR_LABEL[livekit.status]}
           </TopButton>
+          {livekit.status === "connected" && livekit.message && (
+            <TopButton onClick={livekit.start} title="Try again for the seats that failed">
+              Retry seats
+            </TopButton>
+          )}
           <TopButton onClick={() => setShowRoles(!showRoles)} active={showRoles} disabled={!gameState.rolesKnown} title="Spectators only: the players never see this">
             {showRoles ? "Hide roles" : "Reveal roles"}
           </TopButton>

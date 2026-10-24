@@ -123,14 +123,19 @@ export function useLiveKit() {
       const info = await resp.json();
       if (!resp.ok) throw new Error(info.error ?? `start failed (${resp.status})`);
       const errors = Object.entries(info.errors ?? {});
-      if (errors.length) setMessage(errors.map(([s, e]) => `Seat ${s}: ${String(e).slice(0, 80)}`).join(" · "));
+      if (errors.length) {
+        const text = (e: unknown) => /"message":\s*"([^"]+)"/.exec(String(e))?.[1] ?? String(e).slice(0, 80);
+        setMessage(`Avatar failed for seat ${errors.map(([s, e]) => `${s} (${text(e)})`).join(", ")}`);
+      }
       await connect();
+      setStatus("connected");
+      refresh();
       roomRef.current?.startAudio().catch(() => undefined);
     } catch (e) {
       setStatus("error");
       setMessage(e instanceof Error ? e.message : String(e));
     }
-  }, [connect]);
+  }, [connect, refresh]);
 
   const stop = useCallback(async () => {
     roomRef.current?.disconnect();

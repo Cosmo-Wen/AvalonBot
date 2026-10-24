@@ -114,8 +114,8 @@ function QuestShield({
       </div>
 
       <span
-        title={`Team of ${teamSize}`}
-        className={`whitespace-nowrap font-mono text-[10px] transition-colors duration-500 ${
+        title={`Quest ${index + 1} sends ${teamSize} players`}
+        className={`flex gap-[3px] transition-colors duration-500 ${
           isActive
             ? "text-medieval-gold"
             : isPassed
@@ -125,7 +125,9 @@ function QuestShield({
                 : "text-medieval-silver/50"
         }`}
       >
-        team {teamSize}
+        {Array.from({ length: teamSize }, (_, i) => (
+          <span key={i} className="h-1.5 w-1.5 rounded-full bg-current" />
+        ))}
       </span>
 
       {isFailed && result !== null && result.numFails > 0 && (
@@ -156,6 +158,7 @@ export default function QuestTracker({
           <QuestShield key={i} result={result} index={i} isActive={i === currentQuest - 1 && result === null} />
         ))}
       </div>
+      <p className="font-body text-[10px] text-medieval-silver/60">Dots show how many players each quest sends.</p>
     </div>
   );
 }
