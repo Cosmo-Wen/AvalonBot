@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useRef, useEffect } from "react";
 import { type HumanActionPrompt, SEAT_COLORS, SEAT_NAMES, seatName } from "../types";
 
 interface HumanActionModalProps {
@@ -14,6 +14,118 @@ export default function HumanActionModal({ prompt, onRespond }: HumanActionModal
 
   // State for discussion utterance
   const [discussionText, setDiscussionText] = useState("");
+  const [isRecording, setIsRecording] = useState(false);
+  const [micStatus, setMicStatus] = useState<string | null>(null);
+  const [speakVoice, setSpeakVoice] = useState(true);
+  const recognitionRef = useRef<any>(null);
+  const mediaStreamRef = useRef<MediaStream | null>(null);
+
+  // Clean up any active audio stream / recognition when unmounting
+  useEffect(() => {
+    return () => {
+      if (recognitionRef.current) {
+        try {
+          recognitionRef.current.abort();
+        } catch {}
+      }
+      if (mediaStreamRef.current) {
+        try {
+          mediaStreamRef.current.getTracks().forEach((t) => t.stop());
+        } catch {}
+      }
+    };
+  }, []);
+
+  const startPushToTalk = async () => {
+    setMicStatus(null);
+    const SpeechRecognition =
+      (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
+
+    // 1. Explicitly request microphone stream so browser prompts user
+    try {
+      if (navigator.mediaDevices && navigator.mediaDevices.getUserMedia) {
+        const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+        mediaStreamRef.current = stream;
+      }
+    } catch (err: any) {
+      console.warn("Microphone permission error:", err);
+      setMicStatus("Microphone permission denied. Please allow microphone access in your browser bar.");
+      return;
+    }
+
+    // 2. Start Speech Recognition
+    if (SpeechRecognition) {
+      try {
+        if (recognitionRef.current) {
+          try {
+            recognitionRef.current.abort();
+          } catch {}
+        }
+        const recognition = new SpeechRecognition();
+        recognition.continuous = true;
+        recognition.interimResults = true;
+        recognition.lang = "en-US";
+
+        recognition.onresult = (event: any) => {
+          let text = "";
+          for (let i = 0; i < event.results.length; i++) {
+            text += event.results[i][0].transcript + " ";
+          }
+          if (text.trim()) {
+            setDiscussionText(text.trim());
+          }
+        };
+
+        recognition.onerror = (event: any) => {
+          console.warn("Speech recognition error:", event.error);
+          if (event.error === "not-allowed") {
+            setMicStatus("Microphone blocked. Please click the lock/camera icon in your address bar to allow mic.");
+          } else if (event.error === "network") {
+            setMicStatus("Browser speech service network issue. You can still type or pick suggestions below.");
+          }
+        };
+
+        recognition.onend = () => {
+          // Keep isRecording state managed by user release
+        };
+
+        recognition.start();
+        recognitionRef.current = recognition;
+        setIsRecording(true);
+      } catch (err: any) {
+        console.warn("Speech recognition start failed:", err);
+        setMicStatus("Could not start speech recognition. You can type or use suggestions below.");
+        setIsRecording(true);
+      }
+    } else {
+      setMicStatus("Web Speech API not supported in this browser. Please use Chrome/Edge or type below.");
+      setIsRecording(true);
+    }
+  };
+
+  const stopPushToTalk = () => {
+    if (recognitionRef.current) {
+      try {
+        recognitionRef.current.stop();
+      } catch {}
+      recognitionRef.current = null;
+    }
+    if (mediaStreamRef.current) {
+      try {
+        mediaStreamRef.current.getTracks().forEach((t) => t.stop());
+      } catch {}
+      mediaStreamRef.current = null;
+    }
+    setIsRecording(false);
+  };
+
+  const togglePushToTalk = () => {
+    if (isRecording) {
+      stopPushToTalk();
+    } else {
+      void startPushToTalk();
+    }
+  };
 
   const toggleSeat = (seat: number) => {
     if (selectedTeam.includes(seat)) {
@@ -41,8 +153,14 @@ export default function HumanActionModal({ prompt, onRespond }: HumanActionModal
 
   const handleDiscussionSubmit = (e?: React.FormEvent) => {
     if (e) e.preventDefault();
+    stopPushToTalk();
+    const finalTxt = discussionText.trim();
+    if (!finalTxt) {
+      return;
+    }
     onRespond("discussion", {
-      text: discussionText.trim() || `I am a loyal knight of Arthur and seek truth at the table.`,
+      text: finalTxt,
+      speak_audio: speakVoice,
     });
   };
 
@@ -274,46 +392,124 @@ export default function HumanActionModal({ prompt, onRespond }: HumanActionModal
                 YOUR TURN TO SPEAK
               </h2>
               <p className="mt-1 font-body text-xs text-medieval-parchment-dim">
-                Share your suspicions, defend your allies, or advise the leader.
+                Address the Round Table as <span className="font-bold text-medieval-gold">Atlas (Player 0)</span>.
               </p>
             </div>
 
+            {/* Push-to-Talk Microphone Button */}
+            <div className="w-full">
+              <button
+                type="button"
+                onMouseDown={startPushToTalk}
+                onMouseUp={stopPushToTalk}
+                onTouchStart={startPushToTalk}
+                onTouchEnd={stopPushToTalk}
+                onClick={togglePushToTalk}
+                className={`flex items-center justify-center gap-3 w-full rounded-2xl py-3 px-4 font-display text-xs font-bold transition-all duration-200 border select-none cursor-pointer ${
+                  isRecording
+                    ? "border-medieval-crimson-bright bg-medieval-crimson-bright/30 text-white shadow-xl shadow-medieval-crimson-bright/40 scale-[1.01] ring-2 ring-medieval-crimson-bright animate-pulse"
+                    : "border-medieval-gold/50 bg-medieval-gold/15 text-medieval-gold hover:bg-medieval-gold/25 hover:border-medieval-gold active:scale-98"
+                }`}
+              >
+                <span className="text-xl">{isRecording ? "🔴" : "🎙️"}</span>
+                <div className="flex flex-col text-left">
+                  <span className="text-xs uppercase tracking-wider font-bold">
+                    {isRecording ? "Recording... (Release or Click to Stop)" : "Push-to-Talk (Hold or Click to Speak)"}
+                  </span>
+                  <span className="text-[10px] font-normal text-medieval-silver/80">
+                    {isRecording ? "Listening to your microphone... transcribing live" : "Press & hold (or click) to speak with your microphone"}
+                  </span>
+                </div>
+              </button>
+
+              {micStatus && (
+                <div className="mt-2 rounded-xl border border-medieval-crimson-bright/40 bg-medieval-crimson-bright/15 p-2 text-center font-body text-[11px] text-[#f08a8a]">
+                  ⚠️ {micStatus}
+                </div>
+              )}
+            </div>
+
+            {/* Statement Input Box */}
             <div className="w-full text-left">
-              <input
-                type="text"
+              <label className="font-display text-[10px] tracking-wider text-medieval-silver/60 uppercase block mb-1">
+                Your Statement:
+              </label>
+              <textarea
+                rows={2}
                 value={discussionText}
                 onChange={(e) => setDiscussionText(e.target.value)}
-                placeholder="Type your statement to the round table..."
+                placeholder="Type or use Push-to-Talk to compose your statement..."
                 autoFocus
-                className="w-full rounded-xl border border-medieval-border bg-medieval-surface px-4 py-3 font-body text-xs text-medieval-parchment placeholder-medieval-silver/40 focus:border-medieval-gold focus:outline-none"
+                className="w-full rounded-xl border border-medieval-border bg-medieval-surface px-4 py-2.5 font-body text-xs text-medieval-parchment placeholder-medieval-silver/40 focus:border-medieval-gold focus:outline-none resize-none"
               />
             </div>
 
-            {/* Quick Suggestion Pills */}
-            <div className="flex flex-wrap gap-1.5 justify-center w-full my-1">
-              {[
-                "I am a loyal servant of Arthur.",
-                "I trust this team proposal.",
-                "I have suspicions about the last quest.",
-                "We must be cautious on this mission.",
-              ].map((phrase) => (
-                <button
-                  key={phrase}
-                  type="button"
-                  onClick={() => setDiscussionText(phrase)}
-                  className="rounded-full border border-medieval-border/60 bg-medieval-surface/60 px-2.5 py-1 font-body text-[10px] text-medieval-silver/80 hover:text-medieval-gold hover:border-medieval-gold/40 transition-colors"
-                >
-                  {phrase}
-                </button>
-              ))}
+            {/* Quick Suggestion Options (CLICK ONLY FILLS, DOES NOT AUTO-SUBMIT) */}
+            <div className="w-full">
+              <span className="font-display text-[10px] tracking-wider text-medieval-silver/60 uppercase block mb-1.5 text-left">
+                Suggested Statements (Click to fill text box):
+              </span>
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-1.5 text-left">
+                {[
+                  "I am a loyal servant of Arthur and want what is best for the realm.",
+                  "I trust this team proposal and believe we should approve it.",
+                  "I strongly suspect there is an agent of Mordred among us.",
+                  "We must be extremely cautious and reject this expedition.",
+                ].map((phrase) => {
+                  const isSelected = discussionText === phrase;
+                  return (
+                    <button
+                      key={phrase}
+                      type="button"
+                      onClick={() => setDiscussionText(phrase)}
+                      className={`rounded-xl border p-2.5 text-left font-body text-[11px] leading-snug transition-all cursor-pointer ${
+                        isSelected
+                          ? "border-medieval-gold bg-medieval-gold/20 text-medieval-gold ring-1 ring-medieval-gold"
+                          : "border-medieval-border/70 bg-medieval-surface/60 text-medieval-silver/90 hover:border-medieval-gold/40 hover:bg-medieval-surface"
+                      }`}
+                    >
+                      "{phrase}"
+                      {isSelected && (
+                        <span className="block mt-1 font-display text-[10px] text-medieval-gold font-bold">
+                          ✓ Selected
+                        </span>
+                      )}
+                    </button>
+                  );
+                })}
+              </div>
             </div>
 
-            <button
-              type="submit"
-              className="w-full rounded-2xl bg-medieval-gold py-2.5 font-display text-xs font-bold text-black hover:bg-[#e8c95a] active:scale-95 transition-all shadow-lg shadow-medieval-gold/20"
-            >
-              Speak Statement
-            </button>
+            {/* TTS Voice Toggle */}
+            <div className="flex items-center justify-between w-full px-1 text-xs">
+              <label className="flex items-center gap-2 cursor-pointer font-body text-medieval-silver/80 hover:text-medieval-parchment">
+                <input
+                  type="checkbox"
+                  checked={speakVoice}
+                  onChange={(e) => setSpeakVoice(e.target.checked)}
+                  className="rounded border-medieval-border accent-medieval-gold"
+                />
+                <span>Voice Synthesis: Hear Atlas speak via Higgs TTS (Marcus)</span>
+              </label>
+            </div>
+
+            {/* EXPLICIT SUBMIT BUTTON BEFORE PROCEEDING */}
+            <div className="w-full pt-1 flex flex-col gap-1.5">
+              <button
+                type="submit"
+                disabled={!discussionText.trim() && !isRecording}
+                className={`w-full rounded-2xl py-3.5 font-display text-xs font-bold tracking-wider transition-all duration-200 shadow-lg ${
+                  discussionText.trim()
+                    ? "bg-medieval-gold text-black hover:bg-[#e8c95a] active:scale-98 shadow-medieval-gold/25 cursor-pointer"
+                    : "bg-medieval-gold/30 text-black/40 cursor-not-allowed border border-medieval-gold/20"
+                }`}
+              >
+                🚀 SUBMIT STATEMENT & PROCEED
+              </button>
+              <p className="font-body text-[10px] text-medieval-silver/60 text-center">
+                Review your statement above. Clicking submit confirms your words and moves to the next player.
+              </p>
+            </div>
           </form>
         )}
 

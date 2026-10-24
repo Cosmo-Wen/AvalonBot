@@ -27,6 +27,7 @@ class HumanWebAgent(Agent):
         self.is_human = True
         self.pending_future: Optional[asyncio.Future] = None
         self.current_action: Optional[str] = None
+        self.speak_audio = True
 
     def set_private_info(self, info: Dict[str, Any]):
         super().set_private_info(info)
@@ -64,6 +65,7 @@ class HumanWebAgent(Agent):
         try:
             res = await self.pending_future
             text = str(res.get("text", "")).strip()
+            self.speak_audio = bool(res.get("speak_audio", True))
             return text or f"I am a loyal servant of Arthur and want what is best for the realm."
         finally:
             self.pending_future = None
