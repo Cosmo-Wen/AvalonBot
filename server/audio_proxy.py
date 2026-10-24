@@ -14,21 +14,29 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-BOSON_API_KEY = os.getenv("BOSON_API_KEY", "")
+def _first_boson_key() -> str:
+    for name in ("BOSON_API_KEY", "BOSON_API_KEY_1", "BOSON_API_KEY_2", "BOSON_API_KEY_3", "BOSON_API_KEY_4"):
+        value = os.getenv(name, "").strip()
+        if value:
+            return value
+    return ""
+
+
+BOSON_API_KEY = _first_boson_key()
 
 TTS_URL = "https://api.boson.ai/v1/audio/speech"
 CLIENT_SECRETS_URL = "https://api.boson.ai/v1/realtime/client_secrets"
 REALTIME_WS_URL = "wss://api.boson.ai/v1/realtime/"
 
-# Voices follow the face at that seat. Boson only has one male face (James), so Atlas is
-# the male voice. Emma and Claire are women, including Griffin and Phoenix.
+# Voices follow the face at that seat. James is the only male preset, so Atlas and Phoenix
+# (both James) use male voices. Claire and Emma use female voices.
 DEFAULT_VOICES = {
     -1: os.getenv("BOSON_VOICE_NARRATOR", "nora"),
     0: os.getenv("BOSON_VOICE_0", "marcus"),    # James
     1: os.getenv("BOSON_VOICE_1", "eleanor"),   # Claire
     2: os.getenv("BOSON_VOICE_2", "nora"),      # Emma
-    3: os.getenv("BOSON_VOICE_3", "eleanor"),   # Claire, slower than Lyra
-    4: os.getenv("BOSON_VOICE_4", "chloe"),     # Emma
+    3: os.getenv("BOSON_VOICE_3", "jake"),      # James, distinct from Atlas
+    4: os.getenv("BOSON_VOICE_4", "chloe"),     # Claire
 }
 
 SEAT_PROFILES = {

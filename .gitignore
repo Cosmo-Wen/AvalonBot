@@ -8,6 +8,7 @@ secrets/
 
 # ---- Python ----
 __pycache__/
+server/avatar_sessions.json
 *.py[cod]
 *$py.class
 *.so

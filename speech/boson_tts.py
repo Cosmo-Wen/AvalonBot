@@ -38,7 +38,7 @@ DEFAULT_SEAT_VOICES: Dict[int, str] = {
     0: os.getenv("BOSON_VOICE_0", "marcus"),
     1: os.getenv("BOSON_VOICE_1", "eleanor"),
     2: os.getenv("BOSON_VOICE_2", "nora"),
-    3: os.getenv("BOSON_VOICE_3", "eleanor"),
+    3: os.getenv("BOSON_VOICE_3", "jake"),
     4: os.getenv("BOSON_VOICE_4", "chloe"),
 }
 
@@ -106,7 +106,7 @@ class HiggsTTSClient:
         cache_dir: str = "audio_cache",
         play_audio: bool = True,
     ):
-        self.api_key = (api_key or os.getenv("BOSON_API_KEY", "")).strip()
+        self.api_key = (api_key or os.getenv("BOSON_API_KEY") or os.getenv("BOSON_API_KEY_1") or "").strip()
         self.model = model
         self.seat_voices = seat_voices or DEFAULT_SEAT_VOICES
         self.cache_dir = Path(cache_dir)

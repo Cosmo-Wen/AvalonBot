@@ -6,7 +6,8 @@ voice participant (`avalon-voice-{seat}`) over a LiveKit data stream (`DataStrea
 24 kHz 16-bit mono PCM), and republishes that audio with its video. The browser joins the same room
 as a subscriber and renders each seat's video and audio.
 
-Requires BOSON_API_KEY, LIVEKIT_URL, LIVEKIT_API_KEY, LIVEKIT_API_SECRET and `pip install livekit-agents livekit-api`.
+Requires BOSON_API_KEY_1 through BOSON_API_KEY_4 (one account per seat), LIVEKIT_URL,
+LIVEKIT_API_KEY, LIVEKIT_API_SECRET and `pip install livekit-agents livekit-api`.
 Without them, `is_available` is False and the frontend falls back to portraits plus WebSocket audio.
 """
 
@@ -29,7 +30,6 @@ from dotenv import load_dotenv
 load_dotenv()
 
 BOSON_BASE_URL = os.getenv("BOSON_BASE_URL", "https://api.boson.ai/v1")
-BOSON_API_KEY = os.getenv("BOSON_API_KEY", "")
 LIVEKIT_URL = os.getenv("LIVEKIT_URL", "")
 LIVEKIT_API_KEY = os.getenv("LIVEKIT_API_KEY", "")
 LIVEKIT_API_SECRET = os.getenv("LIVEKIT_API_SECRET", "")
@@ -48,14 +48,42 @@ PLAYOUT_TIMEOUT = 60.0
 CREATE_ATTEMPTS = 5
 SESSION_FILE = Path(__file__).with_name("avatar_sessions.json")
 
-# Boson's presets (GET /v1/avatars). Override per seat with BOSON_AVATAR_<seat>.
-PRESET_AVATARS = [
-    "builtin_james_v1",
-    "builtin_claire_v1",
-    "builtin_emma_v1",
-    "builtin_claire_v1",
-    "builtin_emma_v1",
+# GET /v1/avatars on every key returns only these three public faces.
+# The same preset cannot run twice on one key, so a repeated face uses another key.
+# Seat: (avatar id, BOSON_API_KEY slot). BOSON_AVATAR_<seat> still overrides the id.
+SEAT_FACES = [
+    ("builtin_james_v1", 1),
+    ("builtin_claire_v1", 2),
+    ("builtin_emma_v1", 3),
+    ("builtin_james_v1", 2),
+    ("builtin_claire_v1", 3),
 ]
+
+
+def boson_key(slot: int) -> str:
+    """Slot 1..4 are BOSON_API_KEY_1..4. Slot 0 is the legacy BOSON_API_KEY."""
+    if slot <= 0:
+        return os.getenv("BOSON_API_KEY", "").strip()
+    return os.getenv(f"BOSON_API_KEY_{slot}", "").strip()
+
+
+def key_slot_for_seat(seat: int) -> Optional[int]:
+    """Key that starts this seat. A repeated face is placed on a key that is not already using it."""
+    if seat < 0 or seat >= len(SEAT_FACES):
+        return None
+    slot = SEAT_FACES[seat][1]
+    if boson_key(slot):
+        return slot
+    return None
+
+
+def face_for_seat(seat: int) -> Optional[str]:
+    override = os.getenv(f"BOSON_AVATAR_{seat}", "").strip()
+    if override:
+        return override
+    if 0 <= seat < len(SEAT_FACES):
+        return SEAT_FACES[seat][0]
+    return None
 
 
 def avatar_identity(seat: int) -> str:
@@ -81,9 +109,10 @@ def wav_to_pcm24k(wav_bytes: bytes) -> bytes:
 
 
 class SeatAvatar:
-    def __init__(self, seat: int, session_id: str):
+    def __init__(self, seat: int, session_id: str, key_slot: int = 0):
         self.seat = seat
         self.session_id = session_id
+        self.key_slot = key_slot
         self.room: Optional["rtc.Room"] = None
         self.output: Optional["DataStreamAudioOutput"] = None
 
@@ -103,7 +132,7 @@ class AvatarManager:
 
     @property
     def is_available(self) -> bool:
-        return HAS_LIVEKIT and bool(LIVEKIT_URL and LIVEKIT_API_KEY and LIVEKIT_API_SECRET and BOSON_API_KEY)
+        return HAS_LIVEKIT and bool(LIVEKIT_URL and LIVEKIT_API_KEY and LIVEKIT_API_SECRET and any(boson_key(i) for i in range(5)))
 
     def has_seat(self, seat: int) -> bool:
         avatar = self.seats.get(seat)
@@ -134,16 +163,22 @@ class AvatarManager:
         return self._token(identity, publish=False, subscribe=True)
 
     async def _create_session(self, http: aiohttp.ClientSession, seat: int) -> Optional[SeatAvatar]:
-        # Boson answers 404 avatar_not_found when it can't host another session of a listed preset
-        # right now, so fall back to the other faces rather than leaving the seat empty.
-        preferred = os.getenv(f"BOSON_AVATAR_{seat}", PRESET_AVATARS[seat % len(PRESET_AVATARS)])
-        for avatar_id in [preferred] + [a for a in dict.fromkeys(PRESET_AVATARS) if a != preferred]:
-            avatar = await self._create_with(http, seat, avatar_id)
-            if avatar is not None or "avatar_not_found" not in self.errors.get(seat, ""):
-                return avatar
-        return None
+        slot = key_slot_for_seat(seat)
+        if slot is None:
+            wanted = SEAT_FACES[seat][1] if 0 <= seat < len(SEAT_FACES) else seat + 1
+            self.errors[seat] = f"BOSON_API_KEY_{wanted} is not set"
+            print(f"[avatar] seat {seat}: {self.errors[seat]}")
+            return None
+        avatar_id = face_for_seat(seat)
+        if avatar_id is None:
+            self.errors[seat] = (
+                f"No face for this seat. Set BOSON_AVATAR_{seat} to an avatar uploaded on BOSON_API_KEY_{slot}."
+            )
+            print(f"[avatar] seat {seat}: {self.errors[seat]}")
+            return None
+        return await self._create_with(http, seat, avatar_id, slot)
 
-    async def _create_with(self, http: aiohttp.ClientSession, seat: int, avatar_id: str) -> Optional[SeatAvatar]:
+    async def _create_with(self, http: aiohttp.ClientSession, seat: int, avatar_id: str, key_slot: int) -> Optional[SeatAvatar]:
         body = {
             "model": "higgs-avatar",
             "avatar_id": avatar_id,
@@ -160,15 +195,15 @@ class AvatarManager:
             },
             "max_duration_seconds": MAX_DURATION_SECONDS,
         }
-        headers = {"Authorization": f"Bearer {BOSON_API_KEY}"}
+        headers = {"Authorization": f"Bearer {boson_key(key_slot)}"}
         for attempt in range(CREATE_ATTEMPTS):
             try:
                 async with http.post(f"{BOSON_BASE_URL}/avatar/sessions", json=body, headers=headers,
                                      timeout=aiohttp.ClientTimeout(total=90)) as resp:
                     if resp.status == 201:
                         self.errors.pop(seat, None)
-                        print(f"[avatar] seat {seat}: {avatar_id}")
-                        return SeatAvatar(seat, (await resp.json())["id"])
+                        print(f"[avatar] seat {seat}: {avatar_id} on key {key_slot}")
+                        return SeatAvatar(seat, (await resp.json())["id"], key_slot)
                     self.errors[seat] = f"{avatar_id}: create failed {resp.status}: {(await resp.text())[:200]}"
                     if resp.status != 429:
                         break
@@ -182,15 +217,20 @@ class AvatarManager:
 
     def _remember(self) -> None:
         """Session ids survive a server reload, so the next process can release them."""
-        saved = {str(seat): a.session_id for seat, a in self.seats.items() if a.session_id.startswith("avrt_")}
+        saved = {
+            str(seat): {"id": a.session_id, "slot": a.key_slot}
+            for seat, a in self.seats.items() if a.session_id.startswith("avrt_")
+        }
         SESSION_FILE.write_text(json.dumps(saved))
 
-    async def _delete_session(self, http: aiohttp.ClientSession, session_id: str) -> None:
+    async def _delete_session(self, http: aiohttp.ClientSession, session_id: str, key_slot: int) -> None:
         if not session_id.startswith("avrt_"):
             return
         try:
-            await http.delete(f"{BOSON_BASE_URL}/avatar/sessions/{session_id}",
-                              headers={"Authorization": f"Bearer {BOSON_API_KEY}"})
+            await http.delete(
+                f"{BOSON_BASE_URL}/avatar/sessions/{session_id}",
+                headers={"Authorization": f"Bearer {boson_key(key_slot)}"},
+            )
         except Exception:
             pass
 
@@ -291,7 +331,7 @@ class AvatarManager:
         async with self._lock:
             async with aiohttp.ClientSession() as http:
                 for avatar in self.seats.values():
-                    await self._delete_session(http, avatar.session_id)
+                    await self._delete_session(http, avatar.session_id, avatar.key_slot)
                     if avatar.room is not None:
                         await avatar.room.disconnect()
             self.seats.clear()
