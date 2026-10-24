@@ -8,8 +8,8 @@ interface GameTableProps {
   leader: number;
   proposal: TeamProposal | null;
   showRoles: boolean;
-  seatVideos: Record<number, RemoteTrack>;
-  seatAudio: Record<number, RemoteTrack>;
+  seatVideos?: Record<number, RemoteTrack>;
+  seatAudio?: Record<number, RemoteTrack>;
   seatClips: Record<number, string>;
   muted: boolean;
   levels: Record<number, number>;
@@ -24,7 +24,7 @@ function seatPosition(seat: number) {
   return { left: 50 + SEAT_RADIUS * 100 * Math.cos(angle), top: 50 + SEAT_RADIUS * 100 * Math.sin(angle) };
 }
 
-export default function GameTable({ players, leader, proposal, showRoles, seatVideos, seatAudio, seatClips, muted, levels, children }: GameTableProps) {
+export default function GameTable({ players, leader, proposal, showRoles, seatVideos = {}, seatAudio = {}, seatClips, muted, levels, children }: GameTableProps) {
   const ref = useRef<HTMLDivElement>(null);
   const [size, setSize] = useState(640);
   useEffect(() => {

@@ -10,19 +10,9 @@ import { BeliefPanel } from "./components/BeliefPanel";
 import HumanActionModal from "./components/HumanActionModal";
 import { useGameSocket } from "./hooks/useGameSocket";
 import { useAudio } from "./hooks/useAudio";
-import { useLiveKit, type AvatarStatus } from "./hooks/useLiveKit";
 import { seatName } from "./types";
 
 type View = "table" | "graphs";
-
-const AVATAR_LABEL: Record<AvatarStatus, string> = {
-  checking: "Avatars…",
-  unavailable: "Avatars unavailable",
-  idle: "Start avatars",
-  starting: "Starting avatars…",
-  connected: "Avatars live",
-  error: "Avatars: retry",
-};
 
 function TopButton({ children, onClick, active = false, disabled = false, title }: {
   children: React.ReactNode;
@@ -55,11 +45,8 @@ export default function App() {
   const [voiceOn, setVoiceOn] = useState(true);
 
   const audio = useAudio();
-  const livekit = useLiveKit();
   const { gameState, isConnected, startGame, sendHumanAction, pause, resume, step, setSpeed, setVoice, availableGames, seatClips } =
     useGameSocket("/ws/game", audio.playAudio);
-
-  const levels = useMemo(() => ({ ...audio.levels, ...livekit.levels }), [audio.levels, livekit.levels]);
 
   const phaseDetails = useMemo(() => {
     const { phase, leader, turn, roundNum, currentProposal, mode } = gameState;
@@ -132,8 +119,7 @@ export default function App() {
 
   const toggleMute = useCallback(() => {
     audio.setMuted(!audio.isMuted);
-    livekit.setMuted(!audio.isMuted);
-  }, [audio, livekit]);
+  }, [audio]);
 
   const hasGame = gameState.mode !== null;
   const status = hasGame
@@ -170,21 +156,6 @@ export default function App() {
             <span className={`h-2 w-2 rounded-full ${isConnected ? "bg-medieval-good" : "bg-medieval-crimson-bright"}`} />
             {isConnected ? "Server" : "Offline"}
           </span>
-          <TopButton
-            onClick={livekit.status === "connected" ? livekit.stop : livekit.start}
-            active={livekit.status === "connected"}
-            disabled={livekit.status === "unavailable" || livekit.status === "starting" || livekit.status === "checking"}
-            title={livekit.message || "Higgs talking-head avatars over LiveKit"}
-          >
-            {livekit.status === "connected"
-              ? `Avatars live · ${Object.keys(livekit.seatVideos).length}/5`
-              : AVATAR_LABEL[livekit.status]}
-          </TopButton>
-          {livekit.status === "connected" && livekit.message && (
-            <TopButton onClick={livekit.start} title="Try again for the seats that failed">
-              Retry seats
-            </TopButton>
-          )}
           {gameState.humanRole && (
             <div className="flex items-center gap-2 rounded-full border border-medieval-gold/40 bg-medieval-gold/10 px-3.5 py-1 text-xs">
               <span className="font-display font-semibold text-medieval-gold">
@@ -213,10 +184,9 @@ export default function App() {
 
       <PhaseIndicator phase={gameState.phase} details={phaseDetails} winner={winner} />
 
-      {(gameState.error || livekit.message || gameState.violations.length > 0) && (
+      {(gameState.error || gameState.violations.length > 0) && (
         <div className="mx-auto mt-3 flex w-full max-w-[1500px] flex-col gap-1 px-6 font-body text-xs">
           {gameState.error && <div className="rounded-lg border border-medieval-crimson-bright/40 bg-[#2a0d0d] px-3 py-2 text-[#f08a8a]">{gameState.error}</div>}
-          {livekit.message && <div className="rounded-lg border border-[#e0a83a]/30 bg-[#2a210d] px-3 py-2 text-[#e0c08a]">{livekit.message}</div>}
           {gameState.violations.length > 0 && (
             <div className="rounded-lg border border-[#e0a83a]/30 bg-[#2a210d] px-3 py-2 text-[#e0c08a]">
               Rule violations in the recorded game: {gameState.violations.join("; ")}
@@ -250,11 +220,9 @@ export default function App() {
                 leader={gameState.leader}
                 proposal={gameState.currentProposal}
                 showRoles={showRoles}
-                seatVideos={livekit.seatVideos}
-                seatAudio={livekit.seatAudio}
                 seatClips={seatClips}
                 muted={audio.isMuted}
-                levels={levels}
+                levels={audio.levels}
               >
                 <VoteOverlay events={gameState.events} />
               </GameTable>
