@@ -44,8 +44,9 @@ class ArenaConfig(BaseModel):
     random_leader: bool = True
     # AvalonBot condition for the good team; the evil team always plays chat-only (A)
     condition: Literal["chat_only", "belief_graph", "rule_graph"] = "chat_only"
-    # "hidden": Merlin is told how to conceal what they saw (avalon.llm_agent.MERLIN_HIDDEN_RULES)
-    merlin_strategy: Literal["default", "hidden"] = "default"
+    # "hidden": Merlin is told how to conceal what they saw (avalon.llm_agent.MERLIN_HIDDEN_RULES);
+    # "cover": also votes and picks teams from public evidence, using real knowledge only at match point
+    merlin_strategy: Literal["default", "hidden", "cover"] = "default"
     play_fn: str = "avalon.arena_play:play_game"  # "module:function" that plays one game
 
     concurrency: int = 1

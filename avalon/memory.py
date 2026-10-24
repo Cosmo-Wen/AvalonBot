@@ -126,6 +126,9 @@ class PlayerMemory:
         self.beliefs: Optional[PairBelief] = (
             PairBelief(owner, num_players) if self.private.role == Role.LOYAL_SERVANT else None
         )
+        # Merlin's cover (merlin_strategy: cover): the pair-counting rule over public evidence only,
+        # i.e. what a Servant in Merlin's seat could compute. Set by the agent; never shown to Merlin.
+        self.cover: Optional[PairBelief] = None
         self.belief_mode = belief_mode
 
         # Evil players' P(Merlin), demo only. Off in the ablation so evil is identical across conditions.
@@ -193,6 +196,9 @@ class PlayerMemory:
             if own_fails and team.failed:
                 self.graph.own_fails[team.label] = own_fails
             others_evil = (team.fails or 0) - own_fails
+            if self.cover is not None and team.failed and others_evil > 0:
+                self.cover.add_failed_quest(team.members, others_evil, team.votes)
+                self.cover.set_rule()
             if self.beliefs is not None and team.failed and others_evil > 0:
                 self.beliefs.add_failed_quest(team.members, others_evil, team.votes)
                 if self.belief_mode != "llm":

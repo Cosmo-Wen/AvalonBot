@@ -11,11 +11,13 @@ Compatible with OpenAI, Boson AI, Groq, or any OpenAI-compatible API endpoint.
 
 import os
 import json
-from typing import Dict, List, Optional, Any
+from itertools import combinations
+from typing import Dict, List, Optional, Any, Sequence
 import aiohttp
 
 from .engine import Role, Phase, ROLE_NAMES, ROLE_SIDES
 from .agents import Agent
+from .belief_graph import PairBelief
 from .tools import RECALL_TOOL_DEFINITIONS, get_tool
 
 
@@ -47,6 +49,16 @@ How you play Merlin (the Assassin is watching who reads evil correctly):
 - Now and then voice mild doubt about a good player, and don't defend a good player too eagerly.
 - If a servant is already pushing the right read, let them carry it.
 """
+
+# `merlin_strategy: cover` adds this: Merlin's votes and proposals are made by code (see
+# LLMAgent._cover_vote), so the speech only has to stay consistent with public evidence.
+MERLIN_COVER_RULES = """- Your votes and team picks follow the public evidence, the way a Servant's would. When you explain
+  one, cite only that evidence: failed quests, who was on them, how people voted.
+"""
+
+# A team "looks clean" to a Servant when its P(no evil) under the public counting rule is at least
+# this share of the best any same-size team including them could get.
+COVER_APPROVE_RATIO = 0.75
 
 EXTRACTION_PROMPT = """Discussion round {label} just ended. Record what you heard into your private memory by calling record_observations.
 
@@ -89,7 +101,7 @@ class LLMAgent(Agent):
         temperature: float = 0.7,
         seed: Optional[int] = None,
         merlin_graph: bool = False,
-        merlin_strategy: str = "default",  # "hidden": Merlin also gets MERLIN_HIDDEN_RULES
+        merlin_strategy: str = "default",  # "hidden": MERLIN_HIDDEN_RULES; "cover": also votes/picks by public evidence
     ):
         super().__init__(player_id, role, num_players, condition, seed, merlin_graph=merlin_graph)
         # Unset arguments come from the standard OpenAI variables, so a local .env can route every
@@ -114,8 +126,10 @@ class LLMAgent(Agent):
             side_name="Good" if self.side else "Evil",
             seen_evil_str=seen_evil_str,
         )
-        if self.role == Role.MERLIN and self.merlin_strategy == "hidden":
+        if self.role == Role.MERLIN and self.merlin_strategy in ("hidden", "cover"):
             prompt += MERLIN_HIDDEN_RULES
+        if self._covers:
+            prompt += MERLIN_COVER_RULES
         return prompt
 
     def _memory_context(self) -> str:
@@ -338,8 +352,59 @@ class LLMAgent(Agent):
     def _valid_team(self, team: List[int], team_size: int) -> bool:
         return len(set(team)) == team_size and all(0 <= p < self.num_players for p in team)
 
+    # Merlin's cover (merlin_strategy: cover)
+
+    @property
+    def _covers(self) -> bool:
+        return self.role == Role.MERLIN and self.merlin_strategy == "cover"
+
+    def set_private_info(self, info: Dict[str, Any]):
+        super().set_private_info(info)
+        if self._covers:
+            self.memory.cover = PairBelief(self.player_id, self.num_players)
+
+    def _p_clean(self, team: Sequence[int]) -> float:
+        r"""P(no evil on the team) under the public counting rule, from Merlin's seat."""
+        others = set(team) - {self.player_id}
+        return sum(w for pair, w in self.memory.cover.rule_weights().items() if not others & set(pair))
+
+    def _best_p_clean(self, size: int) -> float:
+        others = [p for p in range(self.num_players) if p != self.player_id]
+        return max(self._p_clean((self.player_id,) + rest) for rest in combinations(others, size - 1))
+
+    def _match_point(self, team: Sequence[int]) -> bool:
+        r"""Evil is on the team and already has a fail: passing it would give evil a 2nd or 3rd fail."""
+        fails = len(self.memory.graph.failed_teams())
+        return fails >= 1 and bool(set(team) & set(self.private_info.get("seen_evil", [])))
+
+    def _cover_vote(self, turn: int, round_num: int, team: List[int]) -> bool:
+        p = self._p_clean(team)
+        approve = p >= COVER_APPROVE_RATIO * self._best_p_clean(len(team))
+        why = f"public evidence: P(no evil on team) = {p:.2f}"
+        if approve and self._match_point(team):
+            approve, why = False, "override: evil on the team at match point"
+        self._record_reason(turn, round_num, "approved" if approve else "rejected", f"cover vote ({why})")
+        return approve
+
+    def _cover_team(self, turn: int, round_num: int, size: int) -> List[int]:
+        others = [p for p in range(self.num_players) if p != self.player_id]
+        teams = [sorted((self.player_id,) + rest) for rest in combinations(others, size - 1)]
+        best = max(self._p_clean(t) for t in teams)
+        plausible = [t for t in teams if self._p_clean(t) >= COVER_APPROVE_RATIO * best]
+        top = [t for t in plausible if self._p_clean(t) == best]
+        pick = self.rng.choice(top)
+        if self._match_point(pick):
+            # don't lead evil onto a deciding quest: any publicly plausible team without them
+            clean = [t for t in plausible if not self._match_point(t)]
+            if clean:
+                pick = self.rng.choice(clean)
+        self._record_reason(turn, round_num, "proposed", f"cover pick (public P(no evil) = {self._p_clean(pick):.2f})")
+        return pick
+
     async def propose_team(self, turn: int, team_size: int) -> List[int]:
         round_num = self._current_round_num()
+        if self._covers:
+            return self._cover_team(turn, round_num, team_size)
         prompt = f"You are the Leader for Quest {turn + 1}. Call propose_team with exactly {team_size} distinct players."
         try:
             # 1. Try Tool Calling first
@@ -375,6 +440,8 @@ class LLMAgent(Agent):
         if round_num >= 4:
             self._record_reason(turn, round_num, "approved", "hammer round auto-approves")
             return True  # Hammer round auto-approves
+        if self._covers:
+            return self._cover_vote(turn, round_num, team)
 
         prompt = f"Quest {turn + 1}, Round {round_num + 1}. Leader Player {leader} proposed team {team}. Call vote_on_team to approve or reject."
         try:
