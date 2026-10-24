@@ -187,8 +187,12 @@ class PlayerMemory:
             self.graph.add_team_vote(e.seq, e.quest, e.attempt, dict(e.votes), bool(e.approved))
         elif e.kind == "quest_result":
             team = self.graph.add_quest_result(e.seq, e.quest, e.attempt, int(e.fails or 0), bool(e.success))
-            if self.beliefs is not None and team.failed:
-                self.beliefs.add_failed_quest(team.members, team.fails, team.votes)
+            own_fails = 1 if self.private.my_quest_cards.get(e.quest) is False else 0
+            if own_fails and team.failed:
+                self.graph.own_fails[team.label] = own_fails
+            others_evil = (team.fails or 0) - own_fails
+            if self.beliefs is not None and team.failed and others_evil > 0:
+                self.beliefs.add_failed_quest(team.members, others_evil, team.votes)
                 if self.belief_mode != "llm":
                     self.beliefs.set_rule()
                 elif self.beliefs.validate(self.beliefs.p_evil):

@@ -141,7 +141,9 @@ The surest way to meet these rules is to store beliefs as weights over the 6 pos
 
 1. List the 6 possible evil pairs among the owner's 4 opponents.
 2. For each failed quest with `k` Fail cards, remove every pair with fewer than `k` members on that team, not counting the owner. If the owner was on a 2-person team that failed, this leaves only pairs containing the other member.
-3. A passed quest removes nothing.
+3. If the owner itself played Fail on that quest, subtract its own Fail from `k` first. A quest the owner failed alone adds no constraint, and the prompt shows it as "all played by you".
+4. A passed quest removes nothing.
+5. If no pair fits every failed quest, keep the pairs that fit the most, and mark the beliefs as inconsistent. This can only happen when a recorded game broke the rules. In pilot game 4, a Servant played Fail. The coherence check then enforces only the failed quests that every remaining pair fits.
 
 Code maintains this list for each Servant in every condition. It is used to check beliefs and to print the constraint lines in the prompt.
 
@@ -301,7 +303,8 @@ The evil team is identical in every condition: same agents, prompts, and memory.
 | `avalon/llm_agent.py` | Extraction call, reflection call (condition A), recall tools |
 | `avalon/tools.py` | Extraction schema. Replace `update_belief` with the full extraction output |
 | `avalon/runner.py` | Global `seq`, per-player delivery, `evil_chat` channel for the demo |
-| `tests/` | Isolation test, coherence-rule tests, a Condition C rule test that matches the example above |
+| `avalon/replay.py` (new) | Reenacts a recorded arena game (`games/game_*.jsonl`) into each player's memory and checks every step against the engine. Hand-labelled talk edges stand in for extraction |
+| `tests/` | Isolation test, coherence-rule tests, a Condition C rule test that matches the example above. `test_replay_game4.py` replays pilot game 4 with `game4-all-fixes/talk_edges.json` |
 
 ## Out of scope
 

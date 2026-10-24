@@ -86,6 +86,8 @@ class KnowledgeGraph:
         self.num_players = num_players
         self.teams: Dict[str, TeamNode] = {}
         self.edges: List[Edge] = []
+        # Fail cards the owner itself played, by team label. They explain that many of the team's fails.
+        self.own_fails: Dict[str, int] = {}
 
     def _add(
         self,
@@ -274,10 +276,17 @@ class KnowledgeGraph:
         lines = []
         for team in self.failed_teams():
             members = "{" + ",".join(str(p) for p in team.members) + "}"
+            plural = "fail" if team.fails == 1 else "fails"
+            head = f"Constraints: {team.label} {members} → {team.fails} {plural}"
+            own = self.own_fails.get(team.label, 0)
+            others_evil = team.fails - own
+            if others_evil <= 0:
+                lines.append(f"{head} (all played by you)")
+                continue
             others = [p for p in team.members if p != self.owner]
             who = ", ".join(f"P{p}" for p in others)
-            plural = "fail" if team.fails == 1 else "fails"
-            lines.append(f"Constraints: {team.label} {members} → {team.fails} {plural} (at least {team.fails} of {who} is evil)")
+            mine = f", {own} played by you" if own else ""
+            lines.append(f"{head} (at least {others_evil} of {who} is evil{mine})")
         return lines
 
     def render_my_record(self, recent: int = 2) -> str:
@@ -329,12 +338,25 @@ class PairBelief:
     def add_failed_quest(self, members: Sequence[int], fails: int, votes: Dict[int, bool]) -> None:
         self.failed_quests.append((list(members), fails, dict(votes)))
 
+    @staticmethod
+    def _fits(pair: Tuple[int, ...], members: Sequence[int], fails: int) -> bool:
+        return len(set(pair) & set(members)) >= fails
+
+    def _num_fitted(self, pair: Tuple[int, ...]) -> int:
+        return sum(self._fits(pair, members, fails) for members, fails, _ in self.failed_quests)
+
     def possible_pairs(self) -> List[Tuple[int, ...]]:
-        pairs = [
-            pair for pair in self.all_pairs
-            if all(len(set(pair) & set(members)) >= fails for members, fails, _ in self.failed_quests)
-        ]
-        return pairs or list(self.all_pairs)
+        """
+        Pairs that fit every failed quest. If none does (only possible when a quest result broke
+        the rules, e.g. a good player played Fail), the pairs that fit the most failed quests.
+        """
+        best = max(self._num_fitted(pair) for pair in self.all_pairs)
+        return [pair for pair in self.all_pairs if self._num_fitted(pair) == best]
+
+    @property
+    def consistent(self) -> bool:
+        """False when no evil pair explains every failed quest this player has seen."""
+        return any(self._num_fitted(pair) == len(self.failed_quests) for pair in self.all_pairs)
 
     def rule_weights(self) -> Dict[Tuple[int, ...], float]:
         weights = {}
@@ -376,7 +398,10 @@ class PairBelief:
         total = sum(p_evil.values())
         if abs(total - self.num_evil) > SUM_TOLERANCE:
             errors.append(f"values must sum to {self.num_evil} (exactly {self.num_evil} of your opponents are evil), got {total:.2f}")
+        pairs = self.possible_pairs()
         for members, fails, _ in self.failed_quests:
+            if not all(self._fits(pair, members, fails) for pair in pairs):
+                continue  # A failed quest the remaining pairs can't explain is not enforced
             others = [p for p in members if p != self.owner]
             team_sum = sum(p_evil[p] for p in others)
             if team_sum < fails - SUM_TOLERANCE:
