@@ -1,0 +1,1211 @@
+{
+ "conditions": {
+  "chat_only": "configs/arena/sol_chat_only.yaml",
+  "belief_graph": "configs/arena/sol_belief_graph.yaml",
+  "rule_graph": "configs/arena/sol_rule_graph.yaml"
+ },
+ "base_seed": 0,
+ "num_games": 40,
+ "games": [
+  {
+   "game_idx": 0,
+   "seed": [
+    0,
+    0
+   ],
+   "roles": [
+    "Merlin",
+    "Assassin",
+    "Servant",
+    "Servant",
+    "Minion"
+   ],
+   "quest_leader": 3,
+   "seat_participants": [
+    0,
+    1,
+    2,
+    3,
+    4
+   ],
+   "agent_seeds": [
+    1916544929,
+    782614838,
+    666202132,
+    1098087405,
+    313291549
+   ],
+   "deal_hash": "bf92ac209b81"
+  },
+  {
+   "game_idx": 1,
+   "seed": [
+    0,
+    1
+   ],
+   "roles": [
+    "Servant",
+    "Minion",
+    "Merlin",
+    "Servant",
+    "Assassin"
+   ],
+   "quest_leader": 2,
+   "seat_participants": [
+    0,
+    1,
+    2,
+    3,
+    4
+   ],
+   "agent_seeds": [
+    1610770571,
+    2117747608,
+    1539773876,
+    594764052,
+    250629496
+   ],
+   "deal_hash": "cc0619682b28"
+  },
+  {
+   "game_idx": 2,
+   "seed": [
+    0,
+    2
+   ],
+   "roles": [
+    "Servant",
+    "Servant",
+    "Assassin",
+    "Minion",
+    "Merlin"
+   ],
+   "quest_leader": 4,
+   "seat_participants": [
+    0,
+    1,
+    2,
+    3,
+    4
+   ],
+   "agent_seeds": [
+    1031336691,
+    1066559217,
+    786346984,
+    1395548703,
+    474111788
+   ],
+   "deal_hash": "7f90400b58bd"
+  },
+  {
+   "game_idx": 3,
+   "seed": [
+    0,
+    3
+   ],
+   "roles": [
+    "Minion",
+    "Servant",
+    "Assassin",
+    "Merlin",
+    "Servant"
+   ],
+   "quest_leader": 4,
+   "seat_participants": [
+    0,
+    1,
+    2,
+    3,
+    4
+   ],
+   "agent_seeds": [
+    1384820549,
+    877336955,
+    1221861991,
+    1157888766,
+    397450148
+   ],
+   "deal_hash": "af74defa42f9"
+  },
+  {
+   "game_idx": 4,
+   "seed": [
+    0,
+    4
+   ],
+   "roles": [
+    "Assassin",
+    "Servant",
+    "Merlin",
+    "Servant",
+    "Minion"
+   ],
+   "quest_leader": 0,
+   "seat_participants": [
+    0,
+    1,
+    2,
+    3,
+    4
+   ],
+   "agent_seeds": [
+    468184873,
+    1732994828,
+    2055742365,
+    943612825,
+    2037422085
+   ],
+   "deal_hash": "c984a85d81f0"
+  },
+  {
+   "game_idx": 5,
+   "seed": [
+    0,
+    5
+   ],
+   "roles": [
+    "Merlin",
+    "Minion",
+    "Servant",
+    "Servant",
+    "Assassin"
+   ],
+   "quest_leader": 4,
+   "seat_participants": [
+    0,
+    1,
+    2,
+    3,
+    4
+   ],
+   "agent_seeds": [
+    1353363411,
+    1735008357,
+    1746909408,
+    271671936,
+    1687485965
+   ],
+   "deal_hash": "fff2a2c3715f"
+  },
+  {
+   "game_idx": 6,
+   "seed": [
+    0,
+    6
+   ],
+   "roles": [
+    "Assassin",
+    "Servant",
+    "Servant",
+    "Merlin",
+    "Minion"
+   ],
+   "quest_leader": 1,
+   "seat_participants": [
+    0,
+    1,
+    2,
+    3,
+    4
+   ],
+   "agent_seeds": [
+    911887314,
+    1477711303,
+    1153190628,
+    928070410,
+    1489563034
+   ],
+   "deal_hash": "72883e556278"
+  },
+  {
+   "game_idx": 7,
+   "seed": [
+    0,
+    7
+   ],
+   "roles": [
+    "Merlin",
+    "Servant",
+    "Minion",
+    "Assassin",
+    "Servant"
+   ],
+   "quest_leader": 2,
+   "seat_participants": [
+    0,
+    1,
+    2,
+    3,
+    4
+   ],
+   "agent_seeds": [
+    844392830,
+    967355475,
+    1074791977,
+    1979347412,
+    1477211882
+   ],
+   "deal_hash": "4653c56edf2b"
+  },
+  {
+   "game_idx": 8,
+   "seed": [
+    0,
+    8
+   ],
+   "roles": [
+    "Minion",
+    "Servant",
+    "Servant",
+    "Assassin",
+    "Merlin"
+   ],
+   "quest_leader": 2,
+   "seat_participants": [
+    0,
+    1,
+    2,
+    3,
+    4
+   ],
+   "agent_seeds": [
+    743137709,
+    565806931,
+    1346718586,
+    873978548,
+    2119380454
+   ],
+   "deal_hash": "88f6043be9dd"
+  },
+  {
+   "game_idx": 9,
+   "seed": [
+    0,
+    9
+   ],
+   "roles": [
+    "Servant",
+    "Minion",
+    "Merlin",
+    "Servant",
+    "Assassin"
+   ],
+   "quest_leader": 1,
+   "seat_participants": [
+    0,
+    1,
+    2,
+    3,
+    4
+   ],
+   "agent_seeds": [
+    281098465,
+    1899862855,
+    1058307367,
+    1013784660,
+    1328616183
+   ],
+   "deal_hash": "2935386d0f64"
+  },
+  {
+   "game_idx": 10,
+   "seed": [
+    0,
+    10
+   ],
+   "roles": [
+    "Servant",
+    "Servant",
+    "Merlin",
+    "Assassin",
+    "Minion"
+   ],
+   "quest_leader": 3,
+   "seat_participants": [
+    0,
+    1,
+    2,
+    3,
+    4
+   ],
+   "agent_seeds": [
+    1133343227,
+    25511500,
+    1828903077,
+    1286594630,
+    995015850
+   ],
+   "deal_hash": "663e00350db1"
+  },
+  {
+   "game_idx": 11,
+   "seed": [
+    0,
+    11
+   ],
+   "roles": [
+    "Servant",
+    "Minion",
+    "Assassin",
+    "Merlin",
+    "Servant"
+   ],
+   "quest_leader": 4,
+   "seat_participants": [
+    0,
+    1,
+    2,
+    3,
+    4
+   ],
+   "agent_seeds": [
+    305237010,
+    835366459,
+    1780261995,
+    1387885765,
+    993631799
+   ],
+   "deal_hash": "62de46abbaaa"
+  },
+  {
+   "game_idx": 12,
+   "seed": [
+    0,
+    12
+   ],
+   "roles": [
+    "Servant",
+    "Assassin",
+    "Minion",
+    "Merlin",
+    "Servant"
+   ],
+   "quest_leader": 4,
+   "seat_participants": [
+    0,
+    1,
+    2,
+    3,
+    4
+   ],
+   "agent_seeds": [
+    181460329,
+    816880829,
+    1435424875,
+    1313282816,
+    1654353246
+   ],
+   "deal_hash": "8904aac90d67"
+  },
+  {
+   "game_idx": 13,
+   "seed": [
+    0,
+    13
+   ],
+   "roles": [
+    "Servant",
+    "Assassin",
+    "Minion",
+    "Servant",
+    "Merlin"
+   ],
+   "quest_leader": 1,
+   "seat_participants": [
+    0,
+    1,
+    2,
+    3,
+    4
+   ],
+   "agent_seeds": [
+    209905868,
+    1245487302,
+    1214114916,
+    811554058,
+    583926280
+   ],
+   "deal_hash": "ffdc6d403ba0"
+  },
+  {
+   "game_idx": 14,
+   "seed": [
+    0,
+    14
+   ],
+   "roles": [
+    "Servant",
+    "Merlin",
+    "Minion",
+    "Assassin",
+    "Servant"
+   ],
+   "quest_leader": 0,
+   "seat_participants": [
+    0,
+    1,
+    2,
+    3,
+    4
+   ],
+   "agent_seeds": [
+    193121387,
+    1297864291,
+    1917750157,
+    455373166,
+    756507811
+   ],
+   "deal_hash": "209c06405c4f"
+  },
+  {
+   "game_idx": 15,
+   "seed": [
+    0,
+    15
+   ],
+   "roles": [
+    "Assassin",
+    "Minion",
+    "Servant",
+    "Merlin",
+    "Servant"
+   ],
+   "quest_leader": 0,
+   "seat_participants": [
+    0,
+    1,
+    2,
+    3,
+    4
+   ],
+   "agent_seeds": [
+    1240929056,
+    1473958475,
+    1442702292,
+    21143278,
+    1201366530
+   ],
+   "deal_hash": "061350a2dd75"
+  },
+  {
+   "game_idx": 16,
+   "seed": [
+    0,
+    16
+   ],
+   "roles": [
+    "Minion",
+    "Assassin",
+    "Servant",
+    "Servant",
+    "Merlin"
+   ],
+   "quest_leader": 0,
+   "seat_participants": [
+    0,
+    1,
+    2,
+    3,
+    4
+   ],
+   "agent_seeds": [
+    1971275286,
+    916598160,
+    1908028430,
+    2056013265,
+    1591280336
+   ],
+   "deal_hash": "01ee75e96b9d"
+  },
+  {
+   "game_idx": 17,
+   "seed": [
+    0,
+    17
+   ],
+   "roles": [
+    "Merlin",
+    "Minion",
+    "Servant",
+    "Servant",
+    "Assassin"
+   ],
+   "quest_leader": 3,
+   "seat_participants": [
+    0,
+    1,
+    2,
+    3,
+    4
+   ],
+   "agent_seeds": [
+    1861210371,
+    1508778268,
+    306722257,
+    2102599734,
+    1458468964
+   ],
+   "deal_hash": "05881453f780"
+  },
+  {
+   "game_idx": 18,
+   "seed": [
+    0,
+    18
+   ],
+   "roles": [
+    "Minion",
+    "Servant",
+    "Merlin",
+    "Assassin",
+    "Servant"
+   ],
+   "quest_leader": 1,
+   "seat_participants": [
+    0,
+    1,
+    2,
+    3,
+    4
+   ],
+   "agent_seeds": [
+    1772485110,
+    464113689,
+    847775706,
+    1991805631,
+    2017118068
+   ],
+   "deal_hash": "db845379acea"
+  },
+  {
+   "game_idx": 19,
+   "seed": [
+    0,
+    19
+   ],
+   "roles": [
+    "Assassin",
+    "Servant",
+    "Merlin",
+    "Minion",
+    "Servant"
+   ],
+   "quest_leader": 3,
+   "seat_participants": [
+    0,
+    1,
+    2,
+    3,
+    4
+   ],
+   "agent_seeds": [
+    2088326003,
+    85017634,
+    1136842786,
+    1443821264,
+    941624338
+   ],
+   "deal_hash": "e745765f1da7"
+  },
+  {
+   "game_idx": 20,
+   "seed": [
+    0,
+    20
+   ],
+   "roles": [
+    "Servant",
+    "Merlin",
+    "Minion",
+    "Assassin",
+    "Servant"
+   ],
+   "quest_leader": 2,
+   "seat_participants": [
+    0,
+    1,
+    2,
+    3,
+    4
+   ],
+   "agent_seeds": [
+    408512479,
+    1894495074,
+    650688383,
+    633719325,
+    23017186
+   ],
+   "deal_hash": "83f4dbd95e2d"
+  },
+  {
+   "game_idx": 21,
+   "seed": [
+    0,
+    21
+   ],
+   "roles": [
+    "Merlin",
+    "Minion",
+    "Assassin",
+    "Servant",
+    "Servant"
+   ],
+   "quest_leader": 0,
+   "seat_participants": [
+    0,
+    1,
+    2,
+    3,
+    4
+   ],
+   "agent_seeds": [
+    440483374,
+    700895977,
+    231723283,
+    1944430543,
+    287404621
+   ],
+   "deal_hash": "d98c18121043"
+  },
+  {
+   "game_idx": 22,
+   "seed": [
+    0,
+    22
+   ],
+   "roles": [
+    "Assassin",
+    "Merlin",
+    "Servant",
+    "Minion",
+    "Servant"
+   ],
+   "quest_leader": 2,
+   "seat_participants": [
+    0,
+    1,
+    2,
+    3,
+    4
+   ],
+   "agent_seeds": [
+    1351735064,
+    792733714,
+    1039164035,
+    1861323397,
+    1626281849
+   ],
+   "deal_hash": "6dabb031f431"
+  },
+  {
+   "game_idx": 23,
+   "seed": [
+    0,
+    23
+   ],
+   "roles": [
+    "Minion",
+    "Assassin",
+    "Servant",
+    "Servant",
+    "Merlin"
+   ],
+   "quest_leader": 4,
+   "seat_participants": [
+    0,
+    1,
+    2,
+    3,
+    4
+   ],
+   "agent_seeds": [
+    883888495,
+    2047997041,
+    540659794,
+    2077911944,
+    1472738650
+   ],
+   "deal_hash": "00f826ecd541"
+  },
+  {
+   "game_idx": 24,
+   "seed": [
+    0,
+    24
+   ],
+   "roles": [
+    "Servant",
+    "Assassin",
+    "Servant",
+    "Merlin",
+    "Minion"
+   ],
+   "quest_leader": 0,
+   "seat_participants": [
+    0,
+    1,
+    2,
+    3,
+    4
+   ],
+   "agent_seeds": [
+    466870980,
+    107678078,
+    707084691,
+    875106636,
+    1209261104
+   ],
+   "deal_hash": "6ef63e524f76"
+  },
+  {
+   "game_idx": 25,
+   "seed": [
+    0,
+    25
+   ],
+   "roles": [
+    "Servant",
+    "Merlin",
+    "Minion",
+    "Servant",
+    "Assassin"
+   ],
+   "quest_leader": 0,
+   "seat_participants": [
+    0,
+    1,
+    2,
+    3,
+    4
+   ],
+   "agent_seeds": [
+    533255207,
+    1843721895,
+    161402160,
+    1775158301,
+    137419355
+   ],
+   "deal_hash": "5baf549c15e1"
+  },
+  {
+   "game_idx": 26,
+   "seed": [
+    0,
+    26
+   ],
+   "roles": [
+    "Servant",
+    "Minion",
+    "Merlin",
+    "Servant",
+    "Assassin"
+   ],
+   "quest_leader": 0,
+   "seat_participants": [
+    0,
+    1,
+    2,
+    3,
+    4
+   ],
+   "agent_seeds": [
+    1212170927,
+    1128306101,
+    721084222,
+    1295014032,
+    1065067254
+   ],
+   "deal_hash": "466347da3d71"
+  },
+  {
+   "game_idx": 27,
+   "seed": [
+    0,
+    27
+   ],
+   "roles": [
+    "Assassin",
+    "Merlin",
+    "Servant",
+    "Minion",
+    "Servant"
+   ],
+   "quest_leader": 1,
+   "seat_participants": [
+    0,
+    1,
+    2,
+    3,
+    4
+   ],
+   "agent_seeds": [
+    1447059747,
+    44052532,
+    692615892,
+    761739592,
+    1663154536
+   ],
+   "deal_hash": "931032c6955d"
+  },
+  {
+   "game_idx": 28,
+   "seed": [
+    0,
+    28
+   ],
+   "roles": [
+    "Minion",
+    "Servant",
+    "Servant",
+    "Merlin",
+    "Assassin"
+   ],
+   "quest_leader": 4,
+   "seat_participants": [
+    0,
+    1,
+    2,
+    3,
+    4
+   ],
+   "agent_seeds": [
+    180448599,
+    2018886980,
+    1360954189,
+    1680670280,
+    1754599736
+   ],
+   "deal_hash": "08b2c960ac3f"
+  },
+  {
+   "game_idx": 29,
+   "seed": [
+    0,
+    29
+   ],
+   "roles": [
+    "Merlin",
+    "Assassin",
+    "Minion",
+    "Servant",
+    "Servant"
+   ],
+   "quest_leader": 4,
+   "seat_participants": [
+    0,
+    1,
+    2,
+    3,
+    4
+   ],
+   "agent_seeds": [
+    1929077889,
+    1162029353,
+    1901047516,
+    2016303789,
+    2128888844
+   ],
+   "deal_hash": "e91ce49721d0"
+  },
+  {
+   "game_idx": 30,
+   "seed": [
+    0,
+    30
+   ],
+   "roles": [
+    "Servant",
+    "Assassin",
+    "Servant",
+    "Merlin",
+    "Minion"
+   ],
+   "quest_leader": 4,
+   "seat_participants": [
+    0,
+    1,
+    2,
+    3,
+    4
+   ],
+   "agent_seeds": [
+    1149766194,
+    1128166984,
+    304231580,
+    1377843172,
+    850600838
+   ],
+   "deal_hash": "7ac30042582a"
+  },
+  {
+   "game_idx": 31,
+   "seed": [
+    0,
+    31
+   ],
+   "roles": [
+    "Assassin",
+    "Servant",
+    "Minion",
+    "Servant",
+    "Merlin"
+   ],
+   "quest_leader": 3,
+   "seat_participants": [
+    0,
+    1,
+    2,
+    3,
+    4
+   ],
+   "agent_seeds": [
+    1705219082,
+    602605,
+    2060980678,
+    826132646,
+    975052420
+   ],
+   "deal_hash": "0a219a92502b"
+  },
+  {
+   "game_idx": 32,
+   "seed": [
+    0,
+    32
+   ],
+   "roles": [
+    "Assassin",
+    "Servant",
+    "Minion",
+    "Merlin",
+    "Servant"
+   ],
+   "quest_leader": 0,
+   "seat_participants": [
+    0,
+    1,
+    2,
+    3,
+    4
+   ],
+   "agent_seeds": [
+    1870678347,
+    1777277590,
+    1861986083,
+    597840791,
+    993186015
+   ],
+   "deal_hash": "865937784b10"
+  },
+  {
+   "game_idx": 33,
+   "seed": [
+    0,
+    33
+   ],
+   "roles": [
+    "Servant",
+    "Minion",
+    "Servant",
+    "Merlin",
+    "Assassin"
+   ],
+   "quest_leader": 3,
+   "seat_participants": [
+    0,
+    1,
+    2,
+    3,
+    4
+   ],
+   "agent_seeds": [
+    1241528169,
+    962744109,
+    740185441,
+    427306453,
+    725242662
+   ],
+   "deal_hash": "f35353081e38"
+  },
+  {
+   "game_idx": 34,
+   "seed": [
+    0,
+    34
+   ],
+   "roles": [
+    "Merlin",
+    "Servant",
+    "Assassin",
+    "Servant",
+    "Minion"
+   ],
+   "quest_leader": 3,
+   "seat_participants": [
+    0,
+    1,
+    2,
+    3,
+    4
+   ],
+   "agent_seeds": [
+    744732312,
+    1382590539,
+    680334218,
+    1079155834,
+    1999044171
+   ],
+   "deal_hash": "60d7f9dd3995"
+  },
+  {
+   "game_idx": 35,
+   "seed": [
+    0,
+    35
+   ],
+   "roles": [
+    "Assassin",
+    "Merlin",
+    "Servant",
+    "Minion",
+    "Servant"
+   ],
+   "quest_leader": 3,
+   "seat_participants": [
+    0,
+    1,
+    2,
+    3,
+    4
+   ],
+   "agent_seeds": [
+    1925412366,
+    1924811251,
+    100544338,
+    1485734071,
+    1799562801
+   ],
+   "deal_hash": "15bc3114bf58"
+  },
+  {
+   "game_idx": 36,
+   "seed": [
+    0,
+    36
+   ],
+   "roles": [
+    "Minion",
+    "Assassin",
+    "Servant",
+    "Merlin",
+    "Servant"
+   ],
+   "quest_leader": 1,
+   "seat_participants": [
+    0,
+    1,
+    2,
+    3,
+    4
+   ],
+   "agent_seeds": [
+    1890003404,
+    1064462759,
+    807522660,
+    672277264,
+    2100836130
+   ],
+   "deal_hash": "5d0534a1f8e5"
+  },
+  {
+   "game_idx": 37,
+   "seed": [
+    0,
+    37
+   ],
+   "roles": [
+    "Servant",
+    "Assassin",
+    "Servant",
+    "Merlin",
+    "Minion"
+   ],
+   "quest_leader": 0,
+   "seat_participants": [
+    0,
+    1,
+    2,
+    3,
+    4
+   ],
+   "agent_seeds": [
+    857041063,
+    1415064222,
+    501680426,
+    1947546178,
+    1817738671
+   ],
+   "deal_hash": "13ff4a6d732e"
+  },
+  {
+   "game_idx": 38,
+   "seed": [
+    0,
+    38
+   ],
+   "roles": [
+    "Servant",
+    "Servant",
+    "Assassin",
+    "Minion",
+    "Merlin"
+   ],
+   "quest_leader": 3,
+   "seat_participants": [
+    0,
+    1,
+    2,
+    3,
+    4
+   ],
+   "agent_seeds": [
+    675038040,
+    269556475,
+    136962062,
+    769152609,
+    1118988105
+   ],
+   "deal_hash": "4b893dfc62cc"
+  },
+  {
+   "game_idx": 39,
+   "seed": [
+    0,
+    39
+   ],
+   "roles": [
+    "Merlin",
+    "Assassin",
+    "Servant",
+    "Minion",
+    "Servant"
+   ],
+   "quest_leader": 4,
+   "seat_participants": [
+    0,
+    1,
+    2,
+    3,
+    4
+   ],
+   "agent_seeds": [
+    2126067506,
+    1924058215,
+    1672355683,
+    2103620797,
+    862345300
+   ],
+   "deal_hash": "f84f1ea9ff23"
+  }
+ ]
+}
