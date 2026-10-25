@@ -356,7 +356,7 @@ def redact_keys(text: str) -> str:
 def classify_openai_error(exc) -> BackendError:
     r"""Only errors where the request was surely not accepted are retryable.
 
-    Metered resellers (e.g. Boson Marketplace) bill accepted requests even if the response is lost,
+    Metered resellers bill accepted requests even if the response is lost,
     so timeouts and 5xx are not retried: a retry could be billed twice.
     """
     import openai

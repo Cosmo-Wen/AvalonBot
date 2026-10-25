@@ -6,7 +6,7 @@ Every agent reads only its own memory (see MEMORY_MODEL.md). For Loyal Servants:
 - Condition B (belief_graph): graph table plus recall tools; P(evil) from its own extraction call
 - Condition C (rule_graph): graph table plus recall tools; P(evil) from the Condition C rule
 Merlin and the evil players see their full observation log in every condition.
-Compatible with OpenAI, Boson AI, Groq, or any OpenAI-compatible API endpoint.
+Compatible with OpenAI or any OpenAI-compatible API endpoint.
 """
 
 import os
@@ -84,9 +84,9 @@ class LLMAgent(Agent):
     ):
         super().__init__(player_id, role, num_players, condition, seed, merlin_graph=merlin_graph, percival_condition=percival_condition)
         # Unset arguments come from the standard OpenAI variables, so a local .env can route every
-        # agent to an OpenAI-compatible endpoint (e.g. Boson Marketplace) without code changes.
+        # agent to any OpenAI-compatible endpoint without code changes.
         self.model = model or os.getenv("OPENAI_MODEL") or "gpt-4o-mini"
-        self.api_key = api_key or os.getenv("OPENAI_API_KEY") or os.getenv("BOSON_API_KEY", "")
+        self.api_key = api_key or os.getenv("OPENAI_API_KEY", "")
         self.base_url = (base_url or os.getenv("OPENAI_BASE_URL") or "https://api.openai.com/v1").rstrip("/")
         self.transport = transport
         self.temperature = temperature

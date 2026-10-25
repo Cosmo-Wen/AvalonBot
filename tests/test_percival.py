@@ -130,7 +130,7 @@ class Transport:
 
 
 def test_real_agent_methods_call_transport_without_key(monkeypatch):
-    for key in ['OPENAI_API_KEY', 'BOSON_API_KEY']:
+    for key in ['OPENAI_API_KEY']:
         monkeypatch.delenv(key, raising=False)
     transport = Transport()
     e = AvalonEngine()
@@ -188,7 +188,7 @@ def test_legacy_hash_and_privacy():
     import json
     from arena.config import NON_SEMANTIC_FIELDS
     config = load_config('configs/arena/sol_chat_only.yaml')
-    old = config.dict(exclude=NON_SEMANTIC_FIELDS | {'percival_condition'})
+    old = config.model_dump(exclude=NON_SEMANTIC_FIELDS | {'percival_condition'})
     assert config.config_hash() == hashlib.sha256(json.dumps(old, sort_keys=True).encode()).hexdigest()[:16]
     e = AvalonEngine()
     e.reset(ROLES)
@@ -209,7 +209,7 @@ def test_legacy_hash_and_privacy():
 ])
 def test_p0_final_merlin_report_without_world_table(monkeypatch, probabilities, expected):
     import json
-    for key in ['OPENAI_API_KEY', 'BOSON_API_KEY']:
+    for key in ['OPENAI_API_KEY']:
         monkeypatch.delenv(key, raising=False)
 
     class ReportTransport:

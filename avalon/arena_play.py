@@ -326,7 +326,7 @@ async def play_game(setup: GameSetup, cfg: ArenaConfig, log: EventLog) -> Dict[s
         ],
     )
 
-    runner = AvalonGameRunner(agents=agents, tts_client=None, verbose=False, on_event=bridge)
+    runner = AvalonGameRunner(agents=agents, verbose=False, on_event=bridge)
     metrics = await runner.run_game(preset_roles=roles, preset_leader=setup.quest_leader)
 
     fatal = next((a.fatal for a in agents.values() if getattr(a, "fatal", None) is not None), None)

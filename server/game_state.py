@@ -78,15 +78,12 @@ def serialize_event(
     event_type: str,
     data: Dict[str, Any],
     seq: int,
-    audio_b64: Optional[str] = None,
 ) -> Dict[str, Any]:
     msg: Dict[str, Any] = {
         "type": event_type,
         "seq": seq,
         "data": data,
     }
-    if audio_b64 is not None:
-        msg["audio"] = audio_b64
     return msg
 
 

@@ -1,5 +1,3 @@
-import { useEffect, useRef, useState } from "react";
-import type { RemoteTrack } from "livekit-client";
 import { type Player, ROLE_DISPLAY, SEAT_COLORS, seatName } from "../types";
 
 interface PlayerAvatarProps {
@@ -8,12 +6,6 @@ interface PlayerAvatarProps {
   isOnTeam: boolean;
   vote?: boolean;
   showRole: boolean;
-  videoTrack?: RemoteTrack | null;
-  audioTrack?: RemoteTrack | null;
-  clipUrl?: string | null;
-  faceStamp?: string;
-  muted?: boolean;
-  level: number;
   width: number;
 }
 
@@ -23,59 +15,6 @@ const ROLE_ICON: Record<string, string> = {
   minion: "/roles/evil-icon.webp",
   loyal_servant: "/roles/good-icon.webp",
 };
-
-/** Phoenix repeats James and Solara repeats Claire, so those two faces are mirrored. */
-const MIRRORED_SEATS = new Set([3, 4]);
-
-function AvatarVideo({ video, audio, muted, mirror }: { video: RemoteTrack; audio?: RemoteTrack | null; muted: boolean; mirror: boolean }) {
-  const ref = useRef<HTMLVideoElement>(null);
-  useEffect(() => {
-    const el = ref.current;
-    if (!el) return;
-    // Both tracks go on one element so the mouth and the voice share a clock.
-    video.attach(el);
-    audio?.attach(el);
-    el.muted = muted;
-    el.play().catch(() => undefined);
-    return () => {
-      video.detach(el);
-      audio?.detach(el);
-    };
-  }, [video, audio, muted]);
-  return (
-    <video
-      ref={ref}
-      autoPlay
-      playsInline
-      className={`absolute inset-0 h-full w-full object-cover object-top ${mirror ? "-scale-x-100" : ""}`}
-    />
-  );
-}
-
-function FaceClip({ url }: { url: string }) {
-  return (
-    <video
-      src={url}
-      autoPlay
-      muted
-      playsInline
-      className="absolute inset-0 h-full w-full object-cover object-top"
-    />
-  );
-}
-
-function FaceStill({ seat, stamp, onError }: { seat: number; stamp: string; onError: () => void }) {
-  const src = stamp ? `/api/face/${seat}?v=${stamp}` : `/api/face/${seat}`;
-  return (
-    <img
-      src={src}
-      alt=""
-      draggable={false}
-      className="absolute inset-0 h-full w-full object-cover object-top"
-      onError={onError}
-    />
-  );
-}
 
 function Emblem({ seat }: { seat: number }) {
   const color = SEAT_COLORS[seat];
@@ -99,13 +38,11 @@ function stripTtsTokens(text: string): string {
     .trim();
 }
 
-export default function PlayerAvatar({ player, isLeader, isOnTeam, vote, showRole, videoTrack, audioTrack, clipUrl, faceStamp = "", muted = false, level, width }: PlayerAvatarProps) {
+export default function PlayerAvatar({ player, isLeader, isOnTeam, vote, showRole, width }: PlayerAvatarProps) {
   const color = SEAT_COLORS[player.seat];
-  const speaking = player.isSpeaking || level > 0.05;
+  const speaking = player.isSpeaking;
   const height = Math.round(width * 1.25);
   const evil = player.side === "evil";
-  const [faceFailed, setFaceFailed] = useState(false);
-  useEffect(() => setFaceFailed(false), [faceStamp]);
 
   return (
     <div className="flex select-none flex-col items-center gap-1.5" style={{ width }}>
@@ -121,15 +58,7 @@ export default function PlayerAvatar({ player, isLeader, isOnTeam, vote, showRol
         }}
       >
         <div className="relative h-full w-full overflow-hidden rounded-[0.8rem] bg-medieval-surface">
-          {clipUrl ? (
-            <FaceClip url={clipUrl} />
-          ) : !faceFailed ? (
-            <FaceStill seat={player.seat} stamp={faceStamp} onError={() => setFaceFailed(true)} />
-          ) : videoTrack ? (
-            <AvatarVideo video={videoTrack} audio={audioTrack} muted={muted} mirror={MIRRORED_SEATS.has(player.seat)} />
-          ) : (
-            <Emblem seat={player.seat} />
-          )}
+          <Emblem seat={player.seat} />
           <div className="pointer-events-none absolute inset-x-0 bottom-0 h-1/3 bg-gradient-to-t from-black/70 to-transparent" />
           {speaking && (
             <div className="absolute bottom-1.5 left-1/2 flex -translate-x-1/2 items-end gap-[2px]">
@@ -137,7 +66,7 @@ export default function PlayerAvatar({ player, isLeader, isOnTeam, vote, showRol
                 <span
                   key={i}
                   className="w-[3px] rounded-full transition-all duration-100"
-                  style={{ height: 4 + Math.max(0, (level || 0.4) - t) * 22, background: color }}
+                  style={{ height: 4 + Math.max(0, 0.4 - t) * 22, background: color }}
                 />
               ))}
             </div>

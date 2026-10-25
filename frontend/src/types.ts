@@ -15,7 +15,6 @@ export interface Player {
   role?: PlayerRole;
   side?: PlayerSide;
   isSpeaking: boolean;
-  audioLevel: number;
   lastUtterance?: string;
 }
 

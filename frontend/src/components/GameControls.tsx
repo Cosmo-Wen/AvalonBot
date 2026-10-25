@@ -4,11 +4,9 @@ interface GameControlsProps {
   isPlaying: boolean;
   hasGame: boolean;
   speed: number;
-  voiceOn: boolean;
   onPlayPause: () => void;
   onStep: () => void;
   onSpeedChange: (speed: number) => void;
-  onVoiceToggle: () => void;
   onNewGame: (humanSeat?: number | null) => void;
   onLlmGame: () => void;
   onLoadReplay: (file: string) => void;
@@ -76,9 +74,6 @@ export default function GameControls(props: GameControlsProps) {
             </button>
           ))}
         </div>
-        <Button onClick={props.onVoiceToggle} active={props.voiceOn} title="Speak each line with Higgs TTS (off above 2x)">
-          Voice {props.voiceOn ? "on" : "off"}
-        </Button>
       </div>
 
       <div className="font-mono text-[11px] text-medieval-silver/70">{props.status}</div>

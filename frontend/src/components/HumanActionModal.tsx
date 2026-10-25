@@ -16,7 +16,6 @@ export default function HumanActionModal({ prompt, onRespond }: HumanActionModal
   const [discussionText, setDiscussionText] = useState("");
   const [isRecording, setIsRecording] = useState(false);
   const [micStatus, setMicStatus] = useState<string | null>(null);
-  const speakVoice = false;
   const recognitionRef = useRef<any>(null);
   const mediaStreamRef = useRef<MediaStream | null>(null);
 
@@ -157,10 +156,7 @@ export default function HumanActionModal({ prompt, onRespond }: HumanActionModal
     const finalTxt =
       discussionText.trim() ||
       "I am a loyal servant of Arthur and want what is best for the realm.";
-    onRespond("discussion", {
-      text: finalTxt,
-      speak_audio: speakVoice,
-    });
+    onRespond("discussion", { text: finalTxt });
   };
 
   const handleAssassinate = (target: number) => {

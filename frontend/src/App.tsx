@@ -9,7 +9,6 @@ import KnowledgeGraphView from "./components/KnowledgeGraphView";
 import { BeliefPanel } from "./components/BeliefPanel";
 import HumanActionModal from "./components/HumanActionModal";
 import { useGameSocket } from "./hooks/useGameSocket";
-import { useAudio } from "./hooks/useAudio";
 import { seatName } from "./types";
 
 type View = "table" | "graphs";
@@ -42,29 +41,9 @@ export default function App() {
   const [showRoles, setShowRoles] = useState(false);
   const [speed, setSpeedLocal] = useState(1);
   const [isPlaying, setIsPlaying] = useState(false);
-  const [voiceOn, setVoiceOn] = useState(true);
 
-  const audio = useAudio();
-  const { gameState, isConnected, startGame, sendHumanAction, pause, resume, step, setSpeed, setVoice, availableGames, seatClips, exportGame, playUpload } =
-    useGameSocket("/ws/game", audio.playAudio);
-  const [faceStamp, setFaceStamp] = useState("");
-  useEffect(() => {
-    let stop = false;
-    const tick = () => {
-      fetch("/api/faces/stamp")
-        .then((r) => r.json())
-        .then((d: { stamp?: string }) => {
-          if (!stop && d.stamp) setFaceStamp(d.stamp);
-        })
-        .catch(() => undefined);
-    };
-    tick();
-    const id = setInterval(tick, 4000);
-    return () => {
-      stop = true;
-      clearInterval(id);
-    };
-  }, []);
+  const { gameState, isConnected, startGame, sendHumanAction, pause, resume, step, setSpeed, availableGames, exportGame, playUpload } =
+    useGameSocket("/ws/game");
 
   const phaseDetails = useMemo(() => {
     const { phase, leader, turn, roundNum, currentProposal, mode } = gameState;
@@ -108,13 +87,11 @@ export default function App() {
 
   const begin = useCallback(
     (mode: "live" | "replay", file?: string, humanSeat?: number | null, players?: "llm" | "heuristic") => {
-      audio.unlock();
       startGame(mode, file, humanSeat, players);
       setSpeed(speed);
-      setVoice(voiceOn);
       setIsPlaying(true);
     },
-    [audio, startGame, setSpeed, setVoice, speed, voiceOn]
+    [startGame, setSpeed, speed]
   );
 
   const [autoplayed, setAutoplayed] = useState(false);
@@ -131,13 +108,8 @@ export default function App() {
     if (s > 0) setSpeedLocal(s);
     startGame(auto === "live" ? "live" : "replay", params.get("file") ?? availableGames[0]);
     if (s > 0) setSpeed(s);
-    setVoice(params.get("voice") !== "0" && voiceOn);
     setIsPlaying(true);
-  }, [autoplayed, isConnected, availableGames, startGame, setSpeed, setVoice, voiceOn]);
-
-  const toggleMute = useCallback(() => {
-    audio.setMuted(!audio.isMuted);
-  }, [audio]);
+  }, [autoplayed, isConnected, availableGames, startGame, setSpeed]);
 
   const hasGame = gameState.mode !== null;
   const status = hasGame
@@ -194,9 +166,6 @@ export default function App() {
           <TopButton onClick={() => setShowRoles(!showRoles)} active={showRoles} disabled={!gameState.rolesKnown} title="Spectators only: the players never see this">
             {showRoles ? "Hide roles" : "Reveal roles"}
           </TopButton>
-          <TopButton onClick={toggleMute} active={audio.isMuted}>
-            {audio.isMuted ? "Unmute" : "Mute"}
-          </TopButton>
         </div>
       </header>
 
@@ -238,10 +207,6 @@ export default function App() {
                 leader={gameState.leader}
                 proposal={gameState.currentProposal}
                 showRoles={showRoles}
-                seatClips={seatClips}
-                faceStamp={faceStamp}
-                muted={audio.isMuted}
-                levels={audio.levels}
               >
                 <VoteOverlay events={gameState.events} />
               </GameTable>
@@ -262,16 +227,11 @@ export default function App() {
         isPlaying={playing}
         hasGame={hasGame && !gameState.finished}
         speed={speed}
-        voiceOn={voiceOn}
         onPlayPause={handlePlayPause}
         onStep={step}
         onSpeedChange={(s) => {
           setSpeedLocal(s);
           setSpeed(s);
-        }}
-        onVoiceToggle={() => {
-          setVoiceOn(!voiceOn);
-          setVoice(!voiceOn);
         }}
         onNewGame={(humanSeat) => begin("live", undefined, humanSeat)}
         onLlmGame={() => begin("live", undefined, null, "llm")}
@@ -283,7 +243,6 @@ export default function App() {
             const parsed = JSON.parse(text) as { events?: { type: string; seq?: number; data?: Record<string, unknown> }[] } | { type: string }[];
             const events = Array.isArray(parsed) ? parsed : parsed.events;
             if (Array.isArray(events) && events.length) {
-              audio.unlock();
               playUpload(events as { type: string; seq?: number; data?: Record<string, unknown> }[]);
               setIsPlaying(true);
             }

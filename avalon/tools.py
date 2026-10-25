@@ -1,8 +1,7 @@
 """
 Tool Definitions and Dispatcher for Avalon LLM Agents.
 
-Implements the official tool-calling schema (compatible with both
-Boson ChatCompletions and Boson Higgs Realtime API).
+Implements the tool-calling schema in the OpenAI Chat Completions format.
 
 Game actions:
 - propose_team(team, reasoning)
@@ -242,26 +241,8 @@ def get_tool(name: str) -> Dict[str, Any]:
     raise KeyError(f"Unknown tool {name}")
 
 
-def format_tools_for_realtime() -> List[Dict[str, Any]]:
-    """
-    Higgs Realtime WebSocket format expects:
-    [{"type": "function", "name": "...", "description": "...", "parameters": {...}}]
-    (unwrapped without the inner 'function' key).
-    """
-    realtime_tools = []
-    for tool in AVALON_TOOL_DEFINITIONS:
-        fn = tool["function"]
-        realtime_tools.append({
-            "type": "function",
-            "name": fn["name"],
-            "description": fn["description"],
-            "parameters": fn["parameters"],
-        })
-    return realtime_tools
-
-
 def format_tools_for_chat_completions() -> List[Dict[str, Any]]:
     """
-    Standard OpenAI / Boson Chat Completions format with 'function' envelope.
+    Standard OpenAI Chat Completions format with 'function' envelope.
     """
     return AVALON_TOOL_DEFINITIONS

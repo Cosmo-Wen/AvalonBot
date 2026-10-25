@@ -19,7 +19,6 @@ const INITIAL_PLAYERS: Player[] = SEAT_NAMES.map((name, seat) => ({
   seat,
   name,
   isSpeaking: false,
-  audioLevel: 0,
 }));
 
 const INITIAL_STATE: GameState = {
@@ -289,29 +288,19 @@ interface UseGameSocketReturn {
   resume: () => void;
   step: () => void;
   setSpeed: (speed: number) => void;
-  setVoice: (on: boolean) => void;
   availableGames: string[];
-  seatClips: Record<number, string>;
   exportGame: () => void;
   playUpload: (events: { type: string; seq?: number; data?: Data }[]) => void;
 }
 
-export function useGameSocket(
-  wsUrl = "/ws/game",
-  onAudio?: (seat: number, base64Wav: string) => void
-): UseGameSocketReturn {
+export function useGameSocket(wsUrl = "/ws/game"): UseGameSocketReturn {
   const [state, dispatch] = useReducer(gameReducer, INITIAL_STATE);
   const [isConnected, setIsConnected] = useState(false);
   const [availableGames, setAvailableGames] = useState<string[]>([]);
-  const [seatClips, setSeatClips] = useState<Record<number, string>>({});
-  const seatClipsRef = useRef<Record<number, string>>({});
-  seatClipsRef.current = seatClips;
   const recordingRef = useRef<{ type: string; seq: number; data: Data }[]>([]);
   const wsRef = useRef<WebSocket | null>(null);
   const reconnectTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const reconnectDelay = useRef(1000);
-  const onAudioRef = useRef(onAudio);
-  onAudioRef.current = onAudio;
   const unmounted = useRef(false);
 
   const send = useCallback((msg: Data) => {
@@ -344,25 +333,8 @@ export function useGameSocket(
         setAvailableGames((data.games as string[]) ?? []);
         return;
       }
-      if (msg.type === "audio") {
-        onAudioRef.current?.(data.speaker as number, data.audio as string);
-        return;
-      }
-      if (msg.type !== "audio" && msg.type !== "avatar_clip" && msg.type !== "speaking" && msg.type !== "game_list" && msg.type !== "human_prompt" && msg.type !== "human_prompt_clear") {
+      if (msg.type !== "speaking" && msg.type !== "human_prompt" && msg.type !== "human_prompt_clear") {
         recordingRef.current.push({ type: msg.type, seq: msg.seq ?? 0, data });
-      }
-      if (msg.type === "avatar_clip") {
-        const seat = Number(data.seat);
-        const video = String(data.video ?? "");
-        if (!video) return;
-        const binary = atob(video);
-        const bytes = new Uint8Array(binary.length);
-        for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
-        const url = URL.createObjectURL(new Blob([bytes], { type: "video/mp4" }));
-        const previous = seatClipsRef.current[seat];
-        if (previous) URL.revokeObjectURL(previous);
-        setSeatClips((prev) => ({ ...prev, [seat]: url }));
-        return;
       }
       dispatch({ type: "MESSAGE", msg: { type: msg.type, seq: msg.seq ?? 0, data } });
     };
@@ -396,8 +368,6 @@ export function useGameSocket(
     (mode: "live" | "replay", replayFile?: string, humanSeat?: number | null, players?: "llm" | "heuristic") => {
       dispatch({ type: "RESET" });
       recordingRef.current = [];
-      for (const url of Object.values(seatClipsRef.current)) URL.revokeObjectURL(url);
-      setSeatClips({});
       send({ type: "start_game", mode, replay_file: replayFile, human_seat: humanSeat, players });
     },
     [send]
@@ -421,9 +391,7 @@ export function useGameSocket(
     resume: useCallback(() => send({ type: "control", action: "resume" }), [send]),
     step: useCallback(() => send({ type: "control", action: "step" }), [send]),
     setSpeed: useCallback((speed: number) => send({ type: "control", action: "speed", value: speed }), [send]),
-    setVoice: useCallback((on: boolean) => send({ type: "settings", voice: on }), [send]),
     availableGames,
-    seatClips,
     exportGame: useCallback(() => {
       const payload = JSON.stringify({ version: 1, events: recordingRef.current });
       const url = URL.createObjectURL(new Blob([payload], { type: "application/json" }));
@@ -436,8 +404,6 @@ export function useGameSocket(
     playUpload: useCallback((events: { type: string; seq?: number; data?: Data }[]) => {
       dispatch({ type: "RESET" });
       recordingRef.current = [];
-      for (const url of Object.values(seatClipsRef.current)) URL.revokeObjectURL(url);
-      setSeatClips({});
       send({ type: "start_playback", events });
     }, [send]),
   };

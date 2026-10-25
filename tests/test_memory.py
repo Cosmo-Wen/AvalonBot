@@ -291,7 +291,7 @@ class SecretHeuristicAgent(HeuristicAgent):
 
 def run_game(agent_cls, condition: str, seed: int, **agent_kwargs):
     agents = {i: agent_cls(player_id=i, role=Role.LOYAL_SERVANT, condition=condition, seed=seed * 10 + i, **agent_kwargs) for i in range(5)}
-    runner = AvalonGameRunner(agents=agents, seed=seed, tts_client=None, verbose=False)
+    runner = AvalonGameRunner(agents=agents, seed=seed, verbose=False)
     metrics = asyncio.run(runner.run_game())
     return runner, agents, metrics
 
@@ -382,7 +382,7 @@ class TestConditions(unittest.TestCase):
             agents = {i: LLMAgent(player_id=i, role=Role.LOYAL_SERVANT, condition=condition, seed=i) for i in range(5)}
             for agent in agents.values():
                 agent.api_key = ""  # never reach a real endpoint, even if a key is set in the environment
-            runner = AvalonGameRunner(agents=agents, seed=4, tts_client=None, verbose=False)
+            runner = AvalonGameRunner(agents=agents, seed=4, verbose=False)
             metrics = asyncio.run(runner.run_game())
             self.assertTrue(metrics.final_p_evil)
             if condition == "belief_graph":
@@ -576,7 +576,7 @@ class TestFullGameWithScriptedLLM(unittest.TestCase):
         agents = {i: CoherentLLM(player_id=i, role=Role.LOYAL_SERVANT, condition="belief_graph", seed=i) for i in range(5)}
         for agent in agents.values():
             agent.api_key = ""
-        metrics = asyncio.run(AvalonGameRunner(agents=agents, seed=7, tts_client=None, verbose=False).run_game())
+        metrics = asyncio.run(AvalonGameRunner(agents=agents, seed=7, verbose=False).run_game())
         self.assertEqual(set(metrics.belief_fallbacks.values()), {0})
         for p, p_evil in metrics.final_p_evil.items():
             self.assertEqual(agents[p].memory.beliefs.source, "llm")

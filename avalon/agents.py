@@ -371,7 +371,7 @@ class HeuristicAgent(Agent):
 
 class HumanAgent(Agent):
     """
-    Agent controlled by a human (via text input or Higgs Realtime speech).
+    Agent controlled by a human (via text input).
     """
 
     def __init__(self, player_id: int, role: Role, num_players: int = 5):
