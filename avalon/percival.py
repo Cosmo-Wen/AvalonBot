@@ -1,4 +1,5 @@
 """Percival's fixed, pre-registered four-world inference model."""
+import itertools
 import math
 from dataclasses import dataclass
 
@@ -7,6 +8,7 @@ MERLIN_MORGANA_FACTOR = 0.1
 MORGANA_REJECT_FACTOR = 0.5
 TEAM_APPROVAL_THRESHOLD = 0.55
 FOLLOW_THRESHOLD = 0.8
+TIE_TOLERANCE = 1e-9
 
 
 @dataclass(frozen=True)
@@ -24,6 +26,7 @@ class World:
 class PercivalBelief:
     def __init__(self, owner, candidates, num_players=5):
         self.owner = owner
+        self.num_players = num_players
         candidates = tuple(sorted(candidates))
         if num_players != 5 or len(set(candidates)) != 2 or owner in candidates or any(c not in range(5) for c in candidates):
             raise ValueError("Percival requires two distinct other-player candidates")
@@ -52,6 +55,30 @@ class PercivalBelief:
 
     def all_good(self, team):
         return sum(w for world, w in zip(self.worlds, self.weights) if not world.evil.intersection(team))
+
+    def best_all_good(self, team_size):
+        r"""The highest all-good probability any team of this size could have."""
+        return max(self.all_good(team) for team in itertools.combinations(range(self.num_players), team_size))
+
+    def best_team(self, team_size):
+        r"""Percival's proposal: the team most likely all good. Ties go to teams with Percival on them,
+        then to the lower summed P(evil), then to the lowest seats."""
+        p_evil = self.p_evil
+        return list(min(itertools.combinations(range(self.num_players), team_size),
+                        key=lambda team: (-round(self.all_good(team), 12), self.owner not in team,
+                                          round(sum(p_evil.get(p, 0.0) for p in team), 12), team)))
+
+    def approves(self, team, leader):
+        r"""Team vote, kept consistent with what Percival would propose itself.
+
+        Percival approves its own proposal (`best_team`), and any team at least as likely all good as the
+        best team of that size. Otherwise the fixed cutoff applies. Without the first two rules Percival rejected its
+        own clean opening team at 50% and the best available trio at 48.9% (P1 seed 0).
+        """
+        if leader == self.owner:
+            return True
+        probability = self.all_good(team)
+        return probability > TEAM_APPROVAL_THRESHOLD or probability >= self.best_all_good(len(team)) - TIE_TOLERANCE
 
     def following(self):
         return next((p for p, prob in self.p_merlin.items() if prob > FOLLOW_THRESHOLD), None)
@@ -88,4 +115,7 @@ class PercivalBelief:
 
     def render(self):
         import json
-        return "Your private four-world belief table:\n" + json.dumps(self.snapshot())
+        best = {size: self.best_team(size) for size in (2, 3)}
+        favoured = "; ".join(f"{size} players: {team} (P(all good)={self.all_good(team):.2f})" for size, team in best.items())
+        return ("Your private four-world belief table:\n" + json.dumps(self.snapshot())
+                + f"\nThe teams you would propose and approve: {favoured}")

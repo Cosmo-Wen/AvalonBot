@@ -121,7 +121,7 @@ class LLMAgent(Agent):
             return ""
         parts = [m.render_private()]
         if m.percival is not None and m.percival.following() is not None:
-            parts.append(f"Privately follow Player {m.percival.following()}'s publicly observed proposals and votes when choosing teams and discussing. Never disclose this inference. Team votes still use your all-good probability cutoff.")
+            parts.append(f"Privately follow Player {m.percival.following()}'s publicly observed proposals and votes when discussing. Never disclose this inference. Your team proposals and votes come from your four-world table, so argue for the team it favours.")
         if self._offers_recall:
             parts.append("Your belief graph:\n" + m.render_table())
             quest = m.log[-1].quest if m.log else 1
@@ -360,6 +360,11 @@ class LLMAgent(Agent):
 
     async def propose_team(self, turn: int, team_size: int) -> List[int]:
         round_num = self._current_round_num()
+        if self.memory is not None and self.memory.percival is not None:
+            # Proposals come from the same four-world model as the votes, so Percival backs its own team
+            team = self.memory.percival.best_team(team_size)
+            self._record_reason(turn, round_num, "proposed", f"P(all good)={self.memory.percival.all_good(team):.4f}")
+            return team
         prompt = f"You are the Leader for Quest {turn + 1}. Call propose_team with exactly {team_size} distinct players."
         try:
             # 1. Try Tool Calling first
@@ -397,9 +402,8 @@ class LLMAgent(Agent):
             return True  # Hammer round auto-approves
 
         if self.memory is not None and self.memory.percival is not None:
-            from .percival import TEAM_APPROVAL_THRESHOLD
             probability = self.memory.percival.all_good(team)
-            approve = probability > TEAM_APPROVAL_THRESHOLD
+            approve = self.memory.percival.approves(team, leader)
             self._record_reason(turn, round_num, "approved" if approve else "rejected", f"P(all good)={probability:.4f}")
             return approve
 

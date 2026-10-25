@@ -93,13 +93,82 @@ def make_agent(cls=LLMAgent, **kwargs):
 
 @pytest.mark.parametrize('probability,expected', [(0.55, False), (.550001, True), (.5, False)])
 def test_vote_cutoff_including_self(probability, expected, monkeypatch):
+    # A better team exists, so only the cutoff decides (Percival is not the leader)
     a = make_agent()
     monkeypatch.setattr(a.memory.percival, 'all_good', lambda team: probability)
+    monkeypatch.setattr(a.memory.percival, 'best_all_good', lambda size: 1.0)
     assert asyncio.run(a.vote_on_team(0, 0, 1, [0, 1])) is expected
     assert asyncio.run(a.vote_on_team(0, 4, 1, [0, 1])) is True
     h = make_agent(HeuristicAgent)
     monkeypatch.setattr(h.memory.percival, 'all_good', lambda team: probability)
-    assert h._decide_team_vote(0, [0, 1])[0] is expected
+    monkeypatch.setattr(h.memory.percival, 'best_all_good', lambda size: 1.0)
+    assert h._decide_team_vote(0, [0, 1], leader=1)[0] is expected
+
+
+# Hand-built evidence for Percival 0 with candidates 1 and 2, other seats 3 and 4.
+
+def test_opening_clean_team_is_proposed_and_approved():
+    b = PercivalBelief(0, [1, 2])
+    # Every team with Percival on it is 50% all good, below the 0.55 cutoff
+    assert b.all_good([0, 3]) == pytest.approx(0.5) and b.best_all_good(2) == pytest.approx(0.5)
+    team = b.best_team(2)
+    assert 0 in team and b.approves(team, leader=0) and b.approves(team, leader=1)
+    assert b.approves([0, 4], leader=3)        # as good as the best team
+    assert not b.approves([1, 3], leader=4)    # 25%: worse than the best team
+
+
+def test_best_trio_below_cutoff_is_approved():
+    # P1 seed 0: the clean trio sat at 48.9%, under the cutoff, and Percival rejected it
+    b = PercivalBelief(0, [1, 2])
+    b.update(entry('proposal', seq=1, leader=1, members=(1, 3)))
+    b.update(entry('team_vote', seq=2, members=(1, 3), votes=((1, True), (2, False), (3, True), (4, False))))
+    best = b.best_all_good(3)
+    assert best < 0.55
+    team = b.best_team(3)
+    assert b.all_good(team) == pytest.approx(best) and b.approves(team, leader=4)
+    worse = [t for t in ([0, 1, 3], [0, 2, 3], [0, 1, 4], [0, 2, 4], [0, 3, 4]) if b.all_good(t) < best - 1e-6]
+    assert worse and not any(b.approves(t, leader=4) for t in worse)
+
+
+def test_failed_quest_rules_out_its_members():
+    b = PercivalBelief(0, [1, 2])
+    b.update(entry('quest_result', seq=1, members=(0, 3), success=False, fails=1))  # 3 is evil
+    assert b.best_team(2) == [0, 4] and b.all_good([0, 4]) == pytest.approx(1.0)
+    assert not b.approves([0, 3], leader=4) and not b.approves([3, 4], leader=1)
+    assert b.approves([0, 3], leader=0)  # a team Percival itself proposed is always backed
+
+
+@pytest.mark.parametrize('seed', range(25))
+def test_votes_back_own_proposals_on_random_evidence(seed):
+    import random
+    rng = random.Random(seed)
+    b = PercivalBelief(0, [1, 2])
+    truth = rng.choice(b.worlds)
+    for seq in range(1, 13):
+        size = rng.choice([2, 3])
+        members = tuple(sorted(rng.sample(range(5), size)))
+        kind = rng.choice(['proposal', 'team_vote', 'quest_result'])
+        if kind == 'proposal':
+            b.update(entry('proposal', seq=seq, leader=rng.randrange(5), members=members))
+        elif kind == 'team_vote':
+            votes = tuple((p, rng.random() < .5) for p in range(5))
+            b.update(entry('team_vote', seq=seq, members=members, votes=votes))
+        else:
+            fails = len(truth.evil.intersection(members))
+            b.update(entry('quest_result', seq=seq, members=members, success=fails == 0, fails=fails))
+        for team_size in (2, 3):
+            team = b.best_team(team_size)
+            assert len(team) == team_size and b.approves(team, leader=0)
+            assert all(b.approves(team, leader=other) for other in range(1, 5))
+
+
+def test_agents_propose_the_best_team():
+    a, h = make_agent(), make_agent(HeuristicAgent)
+    for agent in (a, h):
+        agent.memory.percival.update(entry('quest_result', seq=1, members=(0, 3), success=False, fails=1))
+        assert asyncio.run(agent.propose_team(1, 2)) == [0, 4]
+        assert asyncio.run(agent.vote_on_team(1, 0, 0, [0, 4])) is True
+    assert 'The teams you would propose and approve: 2 players: [0, 4]' in a._memory_context()
 
 
 def test_following_boundary_and_prompts():

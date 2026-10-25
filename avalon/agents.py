@@ -306,6 +306,11 @@ class HeuristicAgent(Agent):
             return self.rng.choice(evil_templates)
 
     async def propose_team(self, turn: int, team_size: int) -> List[int]:
+        if self.memory is not None and self.memory.percival is not None:
+            team = self.memory.percival.best_team(team_size)
+            self._record_reason(turn, self._current_round_num(), "proposed", "four-world most likely all-good team")
+            return team
+
         team = [self.player_id]
 
         if self.side:
@@ -324,18 +329,17 @@ class HeuristicAgent(Agent):
         return sorted(team)
 
     async def vote_on_team(self, turn: int, round_num: int, leader: int, team: List[int]) -> bool:
-        approve, reason = self._decide_team_vote(round_num, team)
+        approve, reason = self._decide_team_vote(round_num, team, leader)
         self._record_reason(turn, round_num, "approved" if approve else "rejected", reason)
         return approve
 
-    def _decide_team_vote(self, round_num: int, team: List[int]):
+    def _decide_team_vote(self, round_num: int, team: List[int], leader: Optional[int] = None):
         # Hammer (round 4) auto-approves
         if round_num >= 4:
             return True, "hammer round auto-approves"
 
         if self.memory is not None and self.memory.percival is not None:
-            from .percival import TEAM_APPROVAL_THRESHOLD
-            return self.memory.percival.all_good(team) > TEAM_APPROVAL_THRESHOLD, "four-world all-good probability"
+            return self.memory.percival.approves(team, leader), "four-world all-good probability"
 
         if self.side:
             if self.player_id in team:
