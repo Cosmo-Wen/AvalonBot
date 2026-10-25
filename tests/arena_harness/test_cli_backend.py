@@ -128,6 +128,13 @@ def test_classify_messages_without_status():
     assert type(classify_cli_failure(None, "something odd")) is BackendError
 
 
+def test_session_limit_429_stops_the_run():
+    # Seen 2026-10-25: retried as transient, so the run failed game after game instead of stopping
+    message = "You've hit your session limit · resets 6:30pm (America/New_York)"
+    assert isinstance(classify_cli_failure(429, message), UsageLimitReached)
+    assert isinstance(classify_cli_failure(429, "rate limited, try again"), TransientBackendError)
+
+
 def test_effort_flag_passed_only_when_set(stub):
     path, log = stub
     for effort in (None, "low"):

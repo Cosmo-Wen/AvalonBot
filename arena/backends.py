@@ -72,7 +72,7 @@ def strip_echoed_label(text: str) -> str:
 # ---------------------------------------------------------------- claude_cli
 
 AUTH_PATTERNS = re.compile(r"not logged in|please run /login|/login|authenticat|invalid api key|oauth token", re.I)
-USAGE_PATTERNS = re.compile(r"usage limit|limit reached|limit will reset|resets at|out of (extra )?usage|weekly limit", re.I)
+USAGE_PATTERNS = re.compile(r"usage limit|limit reached|limit will reset|resets at|resets \d|out of (extra )?usage|weekly limit|session limit|hit your .*limit", re.I)
 MODEL_PATTERNS = re.compile(r"issue with the selected model|model .* not (found|available)", re.I)
 TRANSIENT_PATTERNS = re.compile(r"overloaded|timed? ?out|connection|temporarily|try again|internal server error", re.I)
 
