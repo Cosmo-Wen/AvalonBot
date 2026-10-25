@@ -1,0 +1,96 @@
+{
+ "statuses": {
+  "completed": 40
+ },
+ "outcomes": {
+  "evil:assassination": 26,
+  "good:missions_and_assassin_missed": 7,
+  "evil:missions": 7
+ },
+ "by_participant": {
+  "llm:haiku#0": {
+   "games": 40,
+   "wins": 19,
+   "win_rate": 0.475,
+   "deduction_acc": 0.5
+  },
+  "llm:haiku#1": {
+   "games": 40,
+   "wins": 19,
+   "win_rate": 0.475,
+   "deduction_acc": 0.5
+  },
+  "llm:haiku#2": {
+   "games": 40,
+   "wins": 18,
+   "win_rate": 0.45,
+   "deduction_acc": 0.611
+  },
+  "llm:haiku#3": {
+   "games": 40,
+   "wins": 12,
+   "win_rate": 0.3,
+   "deduction_acc": 0.667
+  },
+  "llm:haiku#4": {
+   "games": 40,
+   "wins": 19,
+   "win_rate": 0.475,
+   "deduction_acc": 0.647
+  }
+ },
+ "by_agent_and_role": {
+  "llm:haiku as Assassin": {
+   "games": 40,
+   "wins": 33,
+   "win_rate": 0.825
+  },
+  "llm:haiku as Merlin": {
+   "games": 40,
+   "wins": 7,
+   "win_rate": 0.175
+  },
+  "llm:haiku as Minion": {
+   "games": 40,
+   "wins": 33,
+   "win_rate": 0.825
+  },
+  "llm:haiku as Servant": {
+   "games": 80,
+   "wins": 14,
+   "win_rate": 0.175
+  }
+ },
+ "usage_by_participant": {
+  "llm:haiku#0": {
+   "calls": 499,
+   "input_tokens": 1425515,
+   "output_tokens": 289288,
+   "cost_usd": 0.4205
+  },
+  "llm:haiku#1": {
+   "calls": 506,
+   "input_tokens": 1444428,
+   "output_tokens": 298880,
+   "cost_usd": 0.4336
+  },
+  "llm:haiku#2": {
+   "calls": 504,
+   "input_tokens": 1466542,
+   "output_tokens": 303859,
+   "cost_usd": 0.4392
+  },
+  "llm:haiku#3": {
+   "calls": 490,
+   "input_tokens": 1402859,
+   "output_tokens": 262459,
+   "cost_usd": 0.3997
+  },
+  "llm:haiku#4": {
+   "calls": 506,
+   "input_tokens": 1451229,
+   "output_tokens": 302492,
+   "cost_usd": 0.434
+  }
+ }
+}

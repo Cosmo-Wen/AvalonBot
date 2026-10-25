@@ -1,0 +1,60 @@
+{
+ "pairs": 40,
+ "conditions": {
+  "A": {
+   "condition": "chat_only",
+   "games": 40,
+   "good_wins": 8,
+   "three_quests_passed": 29,
+   "merlin_assassinated_after_three": 21,
+   "mean_quests_passed": 2.625,
+   "servant_deduction_acc": 0.55,
+   "belief_paths": {},
+   "calls": 2671,
+   "input_tokens": 7635903,
+   "output_tokens": 1166085,
+   "llm_errors": 0,
+   "games_with_errors": []
+  },
+  "C": {
+   "condition": "rule_graph",
+   "games": 40,
+   "good_wins": 7,
+   "three_quests_passed": 33,
+   "merlin_assassinated_after_three": 26,
+   "mean_quests_passed": 2.75,
+   "servant_deduction_acc": 0.5875,
+   "belief_paths": {},
+   "calls": 2505,
+   "input_tokens": 7190573,
+   "output_tokens": 1456978,
+   "llm_errors": 0,
+   "games_with_errors": []
+  }
+ },
+ "paired": {
+  "A_vs_C": {
+   "good_win": {
+    "A_only": 6,
+    "C_only": 5,
+    "mcnemar_exact_p": 1.0
+   },
+   "three_passed": {
+    "A_only": 5,
+    "C_only": 9,
+    "mcnemar_exact_p": 0.424
+   },
+   "assassinated": {
+    "A_only": 7,
+    "C_only": 12,
+    "mcnemar_exact_p": 0.3593
+   },
+   "quests_passed": {
+    "mean_C_minus_A": 0.125,
+    "C_more": 9,
+    "A_more": 5,
+    "ties": 26
+   }
+  }
+ }
+}
