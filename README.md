@@ -7,6 +7,7 @@ the sol batch was 8,674 calls on `gpt-6.1-sol` (Boson), which is no longer avail
 |---|---|
 | `runs-sol.tar.xz` | `runs/sol/`: A `chat_only`, B `belief_graph`, C `rule_graph` (40 paired seeds, 2026-10-24); also `rule_graph_cover` and `rule_graph_hidden`, superseded Merlin-strategy runs |
 | `runs-haiku.tar.xz` | `runs/haiku/`: Haiku pilot via Claude Code (A, B, C); `rule_graph_cap*` / `rule_graph_cover` are superseded Merlin-strategy runs |
+| `runs-haiku-ac.tar.xz` | `runs/haiku-ac/`: Haiku A vs C replication, 40 paired seeds (2026-10-25); results in `experiments/haiku-ac-2026-10-25/` |
 | `runs-smoke-throughput.tar.xz` | Smoke tests and the Boson throughput measurements |
 
 Not included: the Percival P0/P1 logs (only `experiments/percival-2026-10-24/p1_game_00003.jsonl`
