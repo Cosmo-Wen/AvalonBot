@@ -1,16 +1,18 @@
 # AvalonBot: Architecture, Design Decisions & Technical Log
 
-This document provides a comprehensive log of the architectural choices, engineering trade-offs, and technical discoveries made during the design and development of **AvalonBot**. It is maintained so collaborators and future contributors can understand the system design, the empirical findings regarding Boson AI's speech models, and the research methodology.
+This document provides a comprehensive log of the architectural choices, engineering trade-offs, and technical discoveries made during the design and development of **AvalonBot**. It is maintained so collaborators and future contributors can understand the system design and the research methodology.
+
+> The voice layer (Boson Higgs TTS and Realtime), the LiveKit avatars and the talking-face clips were removed after the hackathon. Their design notes are in git history, before the commit that removed `speech/`.
 
 ---
 
 ## 1. Executive Summary & Project Mission
 
-**AvalonBot** bridges rigorous LLM social deduction benchmarking with interactive, real-time voice synthesis.
+**AvalonBot** is an LLM social-deduction benchmark with a playable web table.
 
 ### The Two Core Pillars
 1. **Scientific Benchmark (Ablation Study):** Evaluating whether structured external state tracking (**Belief Graphs**) outperforms unstructured, raw token context (**Chat History**) in high-entropy social deduction environments (*The Resistance: Avalon*).
-2. **Real-Time Spoken Interaction:** Giving autonomous agents unique vocal personalities with emotional prosody and non-verbal reactions using **Boson AI's Higgs TTS 3** and **Higgs Realtime**, allowing human players to converse naturally at the table.
+2. **Live Play:** A human takes one seat in the browser and plays against the agents by typing, while spectators watch each agent's belief graph update.
 
 ```mermaid
 flowchart TD
@@ -25,17 +27,16 @@ flowchart TD
         HUM[HumanAgent]
     end
 
-    subgraph Speech ["Boson AI Voice Layer"]
-        TTS[HiggsTTSClient (POST /v1/audio/speech)]
-        RT[HiggsRealtimeClient (WebSocket)]
-        AC[audio_cache/ PCM WAVs]
+    subgraph Web ["Web Table"]
+        WS[server.ws_server (FastAPI WebSocket)]
+        UI[frontend (React spectator UI)]
     end
 
     GE -->|Broadcast Events| Agents
     Agents -->|Tool Calls: propose, vote, assassinate| GE
-    GE -->|Spoken Utterances| TTS
-    TTS -->|PCM 24kHz Audio| AC
-    HUM <-->|Audio In / Out| RT
+    GE -->|Events| WS
+    WS <--> UI
+    HUM <-->|Typed lines and actions| WS
 ```
 
 ---
@@ -59,7 +60,7 @@ Before writing AvalonBot, we conducted an in-depth audit of the MIT `Avalon-LLM`
      - Assassination phase: If Good secures 3 passed quests, Evil gets one shot to identify Merlin.
 2. **Decoupled Event-Driven Runner (`avalon/runner.py`):**
    - Agents never mutate engine state directly. They observe broadcasted events (`utterance`, `team_proposed`, `team_vote_result`, `quest_result`) and submit actions via typed interfaces.
-   - Voice synthesis is completely decoupled as a subscriber to the event bus. If voice synthesis fails or is muted, the simulation and evaluation runner executes at full speed without interruption.
+   - Observers (the arena logger, the web server) subscribe to the event bus through `on_event`, so the same runner drives self-play and live games.
 
 ---
 
@@ -97,84 +98,9 @@ In raw LLM play (Condition A), models hallucinate past votes or lose track of wh
 
 ---
 
-## 4. Boson AI Speech & Voice Discoveries
+## 4. Tool Calling Protocol
 
-Integrating Boson AI's **Higgs TTS 3** and **Higgs Realtime** yielded several critical technical discoveries regarding acoustic conditioning, token parsing, and voice registry constraints:
-
-### Discovery 1: Built-in Preset Voices vs. Custom Voices
-- **Initial Misconception:** Attempting to call OpenAI voice names (`"alloy"`, `"echo"`) or generic names (`"male_1"`) triggered `HTTP 400: Unknown voice`.
-- **Verified Preset Voice Registry:** Boson Higgs TTS 3 includes 6 verified preset voices natively available without prior cloning:
-  - `marcus`: Authoritative, professorial, assertive male (assigned to Player 0 Minion)
-  - `eleanor`: Articulate, poised, explanatory female (assigned to Player 1 Loyal Servant)
-  - `jake`: High-energy, passionate, dramatic male (assigned to Player 2 Loyal Servant)
-  - `oliver`: Calm, reflective, strategic male (assigned to Player 3 Assassin)
-  - `chloe`: Engaging, friendly, clear female (assigned to Player 4 Merlin)
-  - `nora`: Narrative, calm female
-  - `default`: Base fallback voice
-- **Custom Voices:** Reusable voice IDs (`voice_<id>`) created via `POST /v1/audio/voices` are also fully supported via `os.getenv("BOSON_VOICE_X")`.
-
-### Discovery 2: The Fallback Waveform Synthesizer
-- **Problem:** If a network blip, missing API key, or invalid voice name crashes synthesis, the entire game engine would crash.
-- **Solution:** We implemented `_generate_offline_wav()` in `speech/boson_tts.py`. If Boson returns an error or no key is present, it writes a clean, distinct-frequency PCM sine wave (220Hz to 659Hz) to `audio_cache/`. This allowed local end-to-end development before API keys were added.
-
-### Discovery 3: Why Simple Emotion Tags Felt Flat
-During initial testing, lines tagged with `<|emotion:suspicious|>` sounded acoustic-flat and robotic.
-1. **Acoustic Reality:** In acoustic modeling, "suspicion" is modeled as restrained, low-pitch, low-variance speech. Over laptop speakers, this registers as flat or monotone.
-2. **Invalid Tag Syntax:** Tags like `<|speed:0.92|>` and `<|emotion:confident|>` do **not** exist in Boson's vocabulary. The model silently discarded them and reverted to neutral prosody.
-3. **The Expressiveness Multiplier:** Boson's model requires the dedicated token:
-   ```text
-   <|prosody:expressive_high|>
-   ```
-   (Note: earlier experiments mistakenly tested `expressiveness_high`, which the model silently ignored. Using the verified token `expressive_high` activates the full emotional pitch excursion).
-
-### Discovery 4: Verified Boson Control Token Grammar
-Through testing against Boson documentation and live API endpoints, we confirmed the supported token categories:
-
-| Category | Valid Syntax & Values | Auditory Effect in Avalon |
-|---|---|---|
-| **Emotion** | `<|emotion:anger|>`, `<|emotion:determination|>`, `<|emotion:enthusiasm|>`, `<|emotion:fear|>`, `<|emotion:amusement|>`, `<|emotion:contemplation|>`, `<|emotion:elation|>`, `<|emotion:pride|>`, `<|emotion:relief|>` | Dramatic shifts in pitch inflection, attack, and vocal tension. |
-| **Style** | `<|style:whispering|>`, `<|style:shouting|>`, `<|style:singing|>` | Converts Merlin's advice into a genuine hushed whisper; pushes high vocal effort for accused players. |
-| **Prosody** | `<|prosody:expressive_high|>`, `<|prosody:expressive_low|>`, `<|prosody:speed_fast|>`, `<|prosody:speed_slow|>`, `<|prosody:speed_very_fast|>`, `<|prosody:pause|>`, `<|prosody:long_pause|>` | Unlocks wide pitch excursions, adjusts speech rate, and adds dramatic breath pauses. |
-| **SFX** | `<|sfx:laughter|>Haha!`, `<|sfx:sigh|>Uh,` | Non-verbal vocalizations (laughter, sighs) when paired with immediate text onomatopoeia. |
-
-### Discovery 5: Lexical Prosody Conditioning
-Because Higgs TTS is an auto-regressive multimodal model, its prosody is conditioned directly on the text syntax.
-- **Dry text:** *"I am putting together 2 players with solid records."* $\rightarrow$ Model outputs flat, monotonic speech.
-- **Conversational text:** *"Wait, hold on! <|prosody:pause|>Player 0's actions make me furious! Why did you vote approve on a sabotaged team?!"* $\rightarrow$ Model generates high pitch peaks, natural staccato cadence, and emotional urgency.
-
----
-
-## 5. Vocal Profiles per Seat
-
-Using Boson's verified inline tags, each seat was assigned an acoustic identity matching their role:
-
-| Seat | Role | Vocal Archetype | Active Control Tokens |
-|---|---|---|---|
-| **Player 0** | Minion | Forceful, determined soldier; loud bluffer | `<|emotion:determination|><|prosody:expressive_high|>` |
-| **Player 1** | Loyal Servant | Earnest, passionate defender of Arthur | `<|emotion:enthusiasm|><|prosody:expressive_high|>` |
-| **Player 2** | Loyal Servant | Fast, skeptical investigator; sharp outrage | `<|emotion:anger|><|prosody:speed_fast|><|prosody:expressive_high|>` |
-| **Player 3** | Assassin | Slow, chilling, mocking with laughter | `<|emotion:amusement|><|prosody:speed_slow|><|prosody:expressive_high|><|sfx:laughter|>Haha!` |
-| **Player 4** | Merlin | Cryptic, intimate, whispered warnings | `<|style:whispering|><|emotion:contemplation|><|prosody:expressive_high|>` |
-
----
-
-## 6. Dynamic Emotional Escalation System
-
-To ensure dialogue never repeats and builds natural tension, `HeuristicAgent.team_discussion()` implements a state-aware emotional escalation machine:
-
-1. **Quest 1 (Scouting Phase):**
-   - Controlled, confident proposals; cautious questions; Merlin whispers quietly.
-2. **Post-Sabotage (When any quest has failed):**
-   - Loyal Servants react with **`<|style:shouting|><|emotion:anger|>`** directly confronting players who approved the failed lineup.
-   - Evil agents fire back with indignant defensiveness: *"Stop yelling at me! I put my life on the line for Arthur while you sat back and manipulated everyone!"*
-3. **Hammer Rounds (Round 4 or 5 of any quest):**
-   - High-stakes urgency using **`<|emotion:fear|><|prosody:speed_fast|>`**: *"Wait! We are at round 4 and right at the hammer! If this team fails, evil wins the entire game!"*
-
----
-
-## 7. Tool Calling Protocol for Boson Models
-
-AvalonBot defines 5 formal JSON tools in `avalon/tools.py` compatible with both REST and Realtime WebSocket schemas:
+AvalonBot defines 5 formal JSON tools in `avalon/tools.py`, in the OpenAI Chat Completions format. `claude_cli` and `codex_cli` seats get the same tools, rendered into the prompt and parsed back from a JSON reply.
 
 1. `propose_team(team)`: Leader nominates players.
 2. `vote_on_team(vote)`: Approve/Reject team.
@@ -182,18 +108,9 @@ AvalonBot defines 5 formal JSON tools in `avalon/tools.py` compatible with both 
 4. `assassinate(target)`: Assassin selects suspected Merlin.
 5. `update_belief(player_id, p_evil, rationale)`: Good players update their belief graph.
 
-### WebSocket Realtime Protocol Handshake
-When operating via `wss://api.boson.ai/v1/realtime/`:
-1. Client mints an ephemeral secret via `POST /v1/realtime/client_secrets`.
-2. Connects via WebSocket with subprotocol `["realtime", "bai-client-secret.<token>"]`.
-3. Sends `session.update` with `higgs-stt-3.1` transcription and server VAD turn detection.
-4. On model tool call: Receives `response.function_call_arguments.done`.
-5. Client executes tool locally and emits `conversation.item.create` (`type: "function_call_output"`).
-6. Client triggers exactly one `response.create` to resume speech.
-
 ---
 
-## 8. Chronological Changelog & Milestones
+## 5. Chronological Changelog & Milestones
 
 - **Milestone 1:** Evaluated `Avalon-LLM` and designed the 5-player isolated architecture.
 - **Milestone 2:** Initialized GitHub repo (`KhuzemahHQ/AvalonBot`), created `README.md`, `.gitignore`, `engine.py`, `belief_graph.py`, `runner.py`, and 8 passing unit tests.
@@ -201,18 +118,19 @@ When operating via `wss://api.boson.ai/v1/realtime/`:
 - **Milestone 4:** Resolved HTTP 400 voice registry errors; built offline PCM synthesizer fallback.
 - **Milestone 5:** Discovered Boson Higgs control token vocabulary; introduced `<|prosody:expressiveness_high|>`, whispering, shouting, and laughter SFX.
 - **Milestone 6:** Implemented dynamic emotional escalation across game rounds and created this comprehensive technical log.
+- **After the hackathon (2026-10-25):** Removed the voice layer, LiveKit avatars and face clips; added Claude Code seats (`provider: claude_cli`).
 
 ---
 
-## 9. Running and Testing
+## 6. Running and Testing
 
 ```bash
 # 1. Run all unit tests
 python -m pytest tests/
 
-# 2. Run self-play simulation with live audio playback on speakers
-python simulate.py
+# 2. Play one offline game with heuristic bots (no model calls)
+python -m arena run --fake --config configs/arena/haiku_chat_only.yaml --run-dir runs/fake
 
-# 3. Run self-play simulation in headless mute mode
-python simulate.py --mute
+# 3. Serve the web table (then `npm run dev` in frontend/)
+python -m uvicorn server.ws_server:app --port 8000
 ```

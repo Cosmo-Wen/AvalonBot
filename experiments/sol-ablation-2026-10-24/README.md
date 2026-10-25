@@ -65,7 +65,11 @@ What this says:
 | `manifest_*.json` | Each run's config, config hash and git commit |
 | `graphs/` | Belief-graph pages for seeds 0 and 2 in A, B and C; open `graphs/index.html` |
 
-Game logs are not committed. To reproduce from them:
+Game logs are not on `main`. They are archived on the
+[`archive/run-logs`](https://github.com/Cosmo-Wen/AvalonBot/tree/archive/run-logs) branch
+(`runs-sol.tar.xz`; restore with `tar -xJf runs-sol.tar.xz` from the repo root). The `gpt-6.1-sol`
+endpoint is no longer available, so the `run` commands below are the original recipe, not something
+that can be repeated. The analysis commands work on the restored logs:
 
 ```bash
 python -m arena run --config configs/arena/sol_chat_only.yaml    --run-dir runs/sol/chat_only

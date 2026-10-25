@@ -1,3 +1,4 @@
+# ARCHIVED: the config of the 2026-10-24 gpt-6.1-sol batch (Boson). The endpoint is gone; kept so manifests match.
 # AvalonBot ablation, condition: rule_graph. Every seat on gpt-6.1-sol via an OpenAI-compatible endpoint
 # (OPENAI_BASE_URL / OPENAI_API_KEY from .env). The good team plays rule_graph; evil always plays chat_only.
 # Same base_seed in every condition, so game i has the same deal in each: one pair per game index.

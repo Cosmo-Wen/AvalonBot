@@ -169,7 +169,7 @@ If the check fails, code re-asks once and includes the specific error. If the se
 
 ### Evil `p_merlin` (demo only)
 
-The evil graph uses the same nodes and edges over the 3 good players, with `p_merlin` summing to 1. It is off by default, so evil plays identically in every ablation condition. Turn it on with `merlin_graph=True` on the agents, as `simulate.py` does for the live demo. When it is on, evil players also read each discussion round into talk edges.
+The evil graph uses the same nodes and edges over the 3 good players, with `p_merlin` summing to 1. It is off by default, so evil plays identically in every ablation condition. Turn it on with `merlin_graph=True` on the agents, as the web server's heuristic live game does. When it is on, evil players also read each discussion round into talk edges.
 
 The signal is a good player who is too accurate. Code computes it with fixed factors, the same way as Condition C:
 

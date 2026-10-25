@@ -1,26 +1,26 @@
 # AvalonBot
 
-LLM agents playing a 5-player game of **The Resistance: Avalon** by voice. They bluff, accuse and vote, and a human takes one seat at the table.
+LLM agents playing a 5-player game of **The Resistance: Avalon**. They bluff, accuse and vote, and a human can take one seat at the table in the browser.
 
 Each agent keeps a **belief graph**: its own estimate of how likely each other player is to be evil, plus the evidence behind it (votes, team proposals, accusations), tagged by turn.
 
-> Built for the Boson AI hackathon (Oct 2026). Voice runs on Higgs TTS and Higgs Realtime.
-> 
-> 📖 **Deep Dive:** See [ARCHITECTURE_AND_DECISIONS.md](ARCHITECTURE_AND_DECISIONS.md) for the complete design log, engineering choices, evaluation math, and empirical discoveries regarding Boson AI's speech tags.
+> Started at the Boson AI hackathon (Oct 2026). The hackathon's voice layer (Higgs TTS and Realtime) and avatars have since been removed; the game is text-only.
+>
+> 📖 **Deep Dive:** See [ARCHITECTURE_AND_DECISIONS.md](ARCHITECTURE_AND_DECISIONS.md) for the design log, engineering choices and evaluation math.
 
 ## Goals
 
-- **Live voice game:** each bot argues in its own Higgs TTS voice, and the human joins through Higgs Realtime. A side panel shows each bot's belief graph updating as the game goes.
 - **Ablation:** a self-play experiment measuring whether belief graphs beat plain chat history at finding the spies.
+- **Live game:** a human plays one seat in the browser by typing. A side panel shows each bot's belief graph updating as the game goes.
 
 ## Scope
 
 | Tier | Included |
 | --- | --- |
-| MVP | 5-player rules engine (Merlin, Assassin, 1 Minion, 2 Loyal Servants); LLM agents in two conditions (chat-only vs belief graph); headless self-play runner; metrics script |
-| MVP | Human plays one seat by voice; each bot speaks in its own voice |
-| Stretch | Live belief-graph panel; avatar for the speaking bot; human can interrupt a bot mid-accusation |
-| Out of scope | Percival, Morgana, Lady of the Lake; more than 5 players; fine-tuning |
+| Core | 5-player rules engine (Merlin, Assassin, Minion, 2 Loyal Servants); LLM agents in three conditions (chat-only, belief graph, rule graph); headless self-play runner; metrics scripts |
+| Core | Percival and Morgana variant (Merlin, Percival, Servant vs Assassin, Morgana), with chat-only or four-world Percival beliefs |
+| Core | Web table: a human plays one seat by typing; spectators see each player's belief graph |
+| Out of scope | Lady of the Lake; more than 5 players; fine-tuning; voice |
 
 ## Architecture
 
@@ -28,14 +28,14 @@ Each agent keeps a **belief graph**: its own estimate of how likely each other p
 flowchart LR
   E["Game engine<br/>(rules, single source of truth)"] -- events --> A["Agents<br/>chat-only / belief graph"]
   A -- tool calls --> E
-  E -- events --> V["Voice layer<br/>Higgs TTS per seat"]
-  H["Human seat<br/>Higgs Realtime / push-to-talk"] -- utterances --> E
-  A -. beliefs .-> UI["Demo UI<br/>belief-graph panel"]
+  E -- events --> W["Web server<br/>spectator UI"]
+  H["Human seat<br/>(browser)"] -- lines and actions --> E
+  A -. beliefs .-> W
 ```
 
 - The **game engine** is the single source of truth. Agents only see events and act through tool calls, so the same agent code runs in live play and in self-play.
 - The **belief graph** is a small store kept by each agent: P(evil) for every other player, plus evidence edges (voted with, proposed, accused) tagged by turn. Each turn it's written into the agent's prompt as a compact table.
-- The **voice layer** listens to game events and has no game logic. Bot lines go through TTS, and the human's speech is transcribed into lines. Team picks and votes go through the UI, not speech.
+- The **web server** listens to game events and has no game logic. It paces the transcript for spectators and relays the human seat's typed lines, team picks and votes.
 
 ## Evaluation
 
@@ -58,18 +58,38 @@ The evil team always plays the chat-only baseline, and only the good team's cond
 ## Getting started
 
 ```bash
-git clone https://github.com/KhuzemahHQ/AvalonBot.git
+git clone https://github.com/Cosmo-Wen/AvalonBot.git
 cd AvalonBot
 python -m venv .venv
 # Windows: .venv\Scripts\activate   |   macOS/Linux: source .venv/bin/activate
 pip install -r requirements.txt
-cp .env.example .env   # fill in your keys, then: chmod 600 .env
 python -m pytest tests -q
 ```
 
-`.env` holds `BOSON_API_KEY` for voice, plus `OPENAI_BASE_URL`, `OPENAI_API_KEY` and `OPENAI_MODEL`
-for the LLM players. Any OpenAI-compatible endpoint works, such as a Boson Marketplace key for
-`gpt-6.1-sol`. Never commit `.env`; git ignores it.
+Seats choose a `provider` in the arena config:
+- **`claude_cli`:** plays through `claude -p` on your Claude Code login. No key needed.
+- **`codex_cli`:** plays through your Codex login (`codex login`).
+- **`openai`:** any OpenAI-compatible endpoint. Copy `.env.example` to `.env`, fill in `OPENAI_BASE_URL`,
+  `OPENAI_API_KEY` and `OPENAI_MODEL`, then `chmod 600 .env`. Never commit `.env`; git ignores it.
+- **`fake`:** offline heuristic bots, no model calls.
+
+## Claude Code (Haiku) experiments
+
+```bash
+python -m arena check --config configs/arena/haiku_chat_only.yaml   # one tiny call through claude -p
+python -m arena run   --config configs/arena/haiku_chat_only.yaml --run-dir runs/haiku/chat_only
+python -m arena run   --config configs/arena/haiku_rule_graph.yaml --run-dir runs/haiku/rule_graph
+```
+
+The Haiku configs use the same seeds as the `gpt-6.1-sol` batch, so game *i* is the same deal on both models.
+
+## Live web game
+
+```bash
+pip install -r server/requirements.txt
+python -m uvicorn server.ws_server:app --port 8000
+cd frontend && npm install && npm run dev
+```
 
 ## Codex CLI and Percival experiments
 
@@ -123,7 +143,11 @@ Design choices for the ablation:
   the same command resumes it. A rejected or expired key, or an exhausted allowance, stops the run
   instead of letting it play on fallbacks.
 
-### Throughput on Boson (`gpt-6.1-sol`), measured 2026-10-24
+### Throughput on Boson (`gpt-6.1-sol`), measured 2026-10-24 (historical)
+
+The `sol_*.yaml` configs and these numbers are kept as the record of the 2026-10-24 batch. That endpoint
+is no longer available, so those configs can't be re-run.
+
 
 Condition A, 8 games in parallel:
 
