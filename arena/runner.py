@@ -84,7 +84,7 @@ def ensure_manifest(cfg: ArenaConfig, run_dir: str, force: bool = False) -> str:
         "config_hash": cfg.config_hash(),
         "git_sha": _git_sha(),
         "git_dirty": _git_dirty(),
-        "config": cfg.dict(),
+        "config": cfg.model_dump(),
     }
     with open(path, "w") as f:
         json.dump(manifest, f, indent=2)

@@ -4,7 +4,7 @@ import os
 from typing import List, Literal, Optional
 
 import yaml
-from pydantic import BaseModel, validator, root_validator
+from pydantic import BaseModel, field_validator, model_validator
 
 NUM_PLAYERS = 5
 # model used when a seat doesn't name one
@@ -62,13 +62,15 @@ class ArenaConfig(BaseModel):
     backoff_base_s: float = 2.0
     backoff_max_s: float = 60.0
 
-    @validator("num_players")
+    @field_validator("num_players")
+    @classmethod
     def _five_players(cls, v):
         if v != NUM_PLAYERS:
             raise ValueError(f"only {NUM_PLAYERS}-player games are supported")
         return v
 
-    @validator("roles")
+    @field_validator("roles")
+    @classmethod
     def _valid_roles(cls, v):
         unknown = set(v) - VALID_ROLES
         if unknown:
@@ -79,30 +81,30 @@ class ArenaConfig(BaseModel):
             raise ValueError("a 5-player game needs exactly 2 evil roles")
         return v
 
-    @root_validator(skip_on_failure=True)
-    def _sizes_and_names(cls, values):
-        n = values["num_players"]
-        if len(values["seats"]) != n:
-            raise ValueError(f"expected {n} seats, got {len(values['seats'])}")
-        if len(values["roles"]) != n:
-            raise ValueError(f"expected {n} roles, got {len(values['roles'])}")
-        if "Percival" in values["roles"] or "Morgana" in values["roles"]:
-            if sorted(values["roles"]) != sorted(["Merlin", "Percival", "Servant", "Assassin", "Morgana"]):
+    @model_validator(mode="after")
+    def _sizes_and_names(self):
+        n = self.num_players
+        if len(self.seats) != n:
+            raise ValueError(f"expected {n} seats, got {len(self.seats)}")
+        if len(self.roles) != n:
+            raise ValueError(f"expected {n} roles, got {len(self.roles)}")
+        if "Percival" in self.roles or "Morgana" in self.roles:
+            if sorted(self.roles) != sorted(["Merlin", "Percival", "Servant", "Assassin", "Morgana"]):
                 raise ValueError("Percival games require Merlin, Percival, Servant, Assassin, Morgana")
-        elif values["percival_condition"] == "four_world":
+        elif self.percival_condition == "four_world":
             raise ValueError("four_world requires the Percival role set")
-        for i, seat in enumerate(values["seats"]):
+        for i, seat in enumerate(self.seats):
             if seat.model is None:
                 seat.model = DEFAULT_MODELS[seat.provider]
             if seat.name is None:
                 seat.name = f"{seat.agent}:{seat.model}#{i}"
-        names = [s.name for s in values["seats"]]
+        names = [s.name for s in self.seats]
         if len(set(names)) != len(names):
             raise ValueError(f"seat names must be unique: {names}")
-        return values
+        return self
 
     def config_hash(self) -> str:
-        semantic = self.dict(exclude=NON_SEMANTIC_FIELDS)
+        semantic = self.model_dump(exclude=NON_SEMANTIC_FIELDS)
         if "Percival" not in self.roles:
             semantic.pop("percival_condition", None)  # preserve hashes of historical A/B/C runs
         blob = json.dumps(semantic, sort_keys=True).encode()
@@ -130,4 +132,4 @@ def load_env_file(path: str = ".env") -> list:
 
 def load_config(path: str) -> ArenaConfig:
     with open(path, encoding="utf-8") as f:
-        return ArenaConfig.parse_obj(yaml.safe_load(f))
+        return ArenaConfig.model_validate(yaml.safe_load(f))

@@ -14,7 +14,7 @@ def make_cfg(**overrides) -> ArenaConfig:
         backoff_max_s=0.0,
     )
     base.update(overrides)
-    return ArenaConfig.parse_obj(base)
+    return ArenaConfig.model_validate(base)
 
 
 @pytest.fixture

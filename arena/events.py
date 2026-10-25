@@ -18,7 +18,7 @@ def _default(o):
     if isinstance(o, (np.ndarray, set, frozenset, tuple)):
         return list(o.tolist() if isinstance(o, np.ndarray) else o)
     if hasattr(o, "dict"):
-        return o.dict()
+        return o.model_dump()
     return str(o)
 
 

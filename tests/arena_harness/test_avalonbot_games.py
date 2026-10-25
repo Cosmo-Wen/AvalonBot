@@ -17,7 +17,7 @@ def heuristic_cfg(condition, **overrides):
     base = dict(seats=[{"provider": "fake", "name": f"h{i}"} for i in range(5)], num_games=3,
                 base_seed=0, concurrency=3, condition=condition)
     base.update(overrides)
-    return ArenaConfig.parse_obj(base)
+    return ArenaConfig.model_validate(base)
 
 
 @pytest.mark.parametrize("condition", ["chat_only", "belief_graph", "rule_graph"])

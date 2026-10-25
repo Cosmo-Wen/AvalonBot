@@ -1,11 +1,13 @@
-# AvalonBot: engine, agents, belief graph, voice
+# AvalonBot: engine, agents, belief graph
 aiohttp>=3.8
 python-dotenv>=1.0
 # Batch runner (arena/)
-pydantic~=1.10.13
+pydantic>=2.6,<3
 numpy>=1.24,<2
 pyyaml~=6.0
 pytest>=7
-# Optional arena backends, only for text-only play functions:
-# openai>=1.66,<2      (stay on 1.x: openai 3.37 fails to import alongside anthropic 2.x)
+# OpenAI-compatible backend (provider: openai). claude_cli and codex_cli need no Python package.
+openai>=3.0,<4
+# Optional, only for provider: anthropic (an API key instead of the Claude Code login).
+# Not tested alongside openai 3.x, which failed to import next to anthropic 2.x in the past:
 # anthropic>=2.0.0
