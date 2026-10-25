@@ -1,0 +1,23 @@
+# Paired Percival experiment on Claude Haiku via `claude -p` (Claude Code login), 40 paired seeds.
+# Percival plays four_world; everything else matches the other config of the pair. Same base_seed in both, so game i is one pair.
+# P1 uses the proposal-consistent four-world rule (avalon/percival.py: best_team, approves).
+#   python -m arena run --config configs/arena/haiku_percival_p1.yaml --run-dir runs/haiku-percival/p1
+seats:
+  - {provider: claude_cli, model: haiku}
+  - {provider: claude_cli, model: haiku}
+  - {provider: claude_cli, model: haiku}
+  - {provider: claude_cli, model: haiku}
+  - {provider: claude_cli, model: haiku}
+roles: [Merlin, Percival, Servant, Assassin, Morgana]
+condition: rule_graph
+percival_condition: four_world
+num_games: 40
+base_seed: 0
+shuffle_roles: true
+shuffle_seats: false
+random_leader: true
+concurrency: 4
+max_inflight_requests: 4
+cli_max_parallel: 4
+max_game_retries: 0
+llm_timeout_s: 180
