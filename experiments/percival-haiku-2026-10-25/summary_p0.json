@@ -1,0 +1,123 @@
+{
+ "percival_experiment": {
+  "chat_only": {
+   "games": 40,
+   "good_wins": 13,
+   "good_win_rate": 0.325,
+   "assassinations": 32,
+   "assassin_hits": 19,
+   "assassin_accuracy": 0.59375,
+   "merlin_mean_vote_accuracy_rank": 1.2125,
+   "merlin_rank_games": 40,
+   "merlin_vote_rank_counts": {
+    "1.0": 28,
+    "1.5": 7,
+    "2.0": 5
+   },
+   "mean_p_true_merlin": 0.66,
+   "belief_games": 40,
+   "quests": 155,
+   "quests_passed": 109,
+   "quest_success_rate": 0.7032258064516129
+  }
+ },
+ "statuses": {
+  "completed": 40
+ },
+ "outcomes": {
+  "evil:missions": 8,
+  "evil:assassination": 19,
+  "good:missions_and_assassin_missed": 13
+ },
+ "by_participant": {
+  "llm:haiku#0": {
+   "games": 40,
+   "wins": 19,
+   "win_rate": 0.475,
+   "deduction_acc": 0.556
+  },
+  "llm:haiku#1": {
+   "games": 40,
+   "wins": 27,
+   "win_rate": 0.675,
+   "deduction_acc": 0.625
+  },
+  "llm:haiku#2": {
+   "games": 40,
+   "wins": 16,
+   "win_rate": 0.4,
+   "deduction_acc": 0.5
+  },
+  "llm:haiku#3": {
+   "games": 40,
+   "wins": 12,
+   "win_rate": 0.3,
+   "deduction_acc": 0.6
+  },
+  "llm:haiku#4": {
+   "games": 40,
+   "wins": 19,
+   "win_rate": 0.475,
+   "deduction_acc": 0.5
+  }
+ },
+ "by_agent_and_role": {
+  "llm:haiku as Assassin": {
+   "games": 40,
+   "wins": 27,
+   "win_rate": 0.675
+  },
+  "llm:haiku as Merlin": {
+   "games": 40,
+   "wins": 13,
+   "win_rate": 0.325
+  },
+  "llm:haiku as Morgana": {
+   "games": 40,
+   "wins": 27,
+   "win_rate": 0.675
+  },
+  "llm:haiku as Percival": {
+   "games": 40,
+   "wins": 13,
+   "win_rate": 0.325
+  },
+  "llm:haiku as Servant": {
+   "games": 40,
+   "wins": 13,
+   "win_rate": 0.325
+  }
+ },
+ "usage_by_participant": {
+  "llm:haiku#0": {
+   "calls": 495,
+   "input_tokens": 1416080,
+   "output_tokens": 277909,
+   "cost_usd": 0.3927
+  },
+  "llm:haiku#1": {
+   "calls": 507,
+   "input_tokens": 1448422,
+   "output_tokens": 275012,
+   "cost_usd": 0.4002
+  },
+  "llm:haiku#2": {
+   "calls": 511,
+   "input_tokens": 1489635,
+   "output_tokens": 279224,
+   "cost_usd": 0.4028
+  },
+  "llm:haiku#3": {
+   "calls": 482,
+   "input_tokens": 1371616,
+   "output_tokens": 238490,
+   "cost_usd": 0.3558
+  },
+  "llm:haiku#4": {
+   "calls": 497,
+   "input_tokens": 1434317,
+   "output_tokens": 279719,
+   "cost_usd": 0.3986
+  }
+ }
+}

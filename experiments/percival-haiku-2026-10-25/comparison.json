@@ -1,0 +1,58 @@
+{
+ "pairs": 40,
+ "conditions": {
+  "P0": {
+   "condition": "p0",
+   "games": 40,
+   "good_wins": 13,
+   "three_quests_passed": 32,
+   "assassinations": 32,
+   "assassin_hits": 19,
+   "merlin_mean_vote_rank": 1.2125,
+   "mean_p_true_merlin": 0.66,
+   "calls": 2492,
+   "llm_errors": 0,
+   "games_with_errors": []
+  },
+  "P1": {
+   "condition": "p1",
+   "games": 40,
+   "good_wins": 20,
+   "three_quests_passed": 40,
+   "assassinations": 40,
+   "assassin_hits": 20,
+   "merlin_mean_vote_rank": 1.3875,
+   "mean_p_true_merlin": 0.9448,
+   "calls": 2054,
+   "llm_errors": 0,
+   "games_with_errors": []
+  }
+ },
+ "paired": {
+  "good_win": {
+   "pairs": 40,
+   "P0_only": 3,
+   "P1_only": 10,
+   "mcnemar_exact_p": 0.0923
+  },
+  "three_passed": {
+   "pairs": 40,
+   "P0_only": 0,
+   "P1_only": 8,
+   "mcnemar_exact_p": 0.0078
+  },
+  "assassin_hit": {
+   "pairs": 32,
+   "P0_only": 5,
+   "P1_only": 3,
+   "mcnemar_exact_p": 0.7266
+  },
+  "merlin_rank": {
+   "pairs": 40,
+   "mean_P1_minus_P0": 0.175,
+   "P1_higher": 16,
+   "P0_higher": 7,
+   "ties": 17
+  }
+ }
+}

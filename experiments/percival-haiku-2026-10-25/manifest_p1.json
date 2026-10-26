@@ -1,0 +1,74 @@
+{
+  "run_id": "p1",
+  "created_at": 1792955816.9015112,
+  "config_hash": "a3fafbc8ac70cf24",
+  "git_sha": "4fa6ba49ba848e870ea63d47b6b391a5ed952ad3",
+  "git_dirty": false,
+  "config": {
+    "num_players": 5,
+    "seats": [
+      {
+        "agent": "llm",
+        "provider": "claude_cli",
+        "model": "haiku",
+        "effort": "medium",
+        "name": "llm:haiku#0"
+      },
+      {
+        "agent": "llm",
+        "provider": "claude_cli",
+        "model": "haiku",
+        "effort": "medium",
+        "name": "llm:haiku#1"
+      },
+      {
+        "agent": "llm",
+        "provider": "claude_cli",
+        "model": "haiku",
+        "effort": "medium",
+        "name": "llm:haiku#2"
+      },
+      {
+        "agent": "llm",
+        "provider": "claude_cli",
+        "model": "haiku",
+        "effort": "medium",
+        "name": "llm:haiku#3"
+      },
+      {
+        "agent": "llm",
+        "provider": "claude_cli",
+        "model": "haiku",
+        "effort": "medium",
+        "name": "llm:haiku#4"
+      }
+    ],
+    "roles": [
+      "Merlin",
+      "Percival",
+      "Servant",
+      "Assassin",
+      "Morgana"
+    ],
+    "num_games": 40,
+    "base_seed": 0,
+    "shuffle_roles": true,
+    "shuffle_seats": false,
+    "random_leader": true,
+    "condition": "rule_graph",
+    "percival_condition": "four_world",
+    "play_fn": "avalon.arena_play:play_game",
+    "concurrency": 4,
+    "max_game_retries": 0,
+    "llm_max_retries": 5,
+    "llm_timeout_s": 180.0,
+    "codex_bin": null,
+    "claude_bin": null,
+    "cli_max_parallel": 4,
+    "max_inflight_requests": 4,
+    "api_max_tokens": 16000,
+    "openai_base_url": null,
+    "backoff_base_s": 2.0,
+    "backoff_max_s": 60.0
+  }
+}

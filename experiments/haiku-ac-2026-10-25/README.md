@@ -39,7 +39,7 @@ What this says:
 - **No model errors and no retries** in any of the 80 games.
 - **Provenance:** A seeds 0–9 and C seeds 0–13 are the Haiku pilot, played at `486bac6`
   (`merlin-vote-cover` branch, `merlin_strategy: default`). The rest were played on branch `cleanup`
-  at `4fa6ba4`. For non-Percival games the prompts and agent logic are the same at both commits.
+  at `616aa3e`. For non-Percival games the prompts and agent logic are the same at both commits.
   `manifest_*.json` names `486bac6` because a resumed run keeps its manifest.
 - **Cost:** A 2,671 calls (7.6M input, 1.2M output tokens), C 2,505 calls (7.2M input, 1.5M output tokens).
   Deduction accuracy is not comparable across conditions (see the sol README).
